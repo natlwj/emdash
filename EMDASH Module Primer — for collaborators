@@ -1,0 +1,117 @@
+# EMDASH Module Primer — for collaborators
+
+**Paste this whole file into your AI assistant (ChatGPT / Claude / Copilot) at the start of your project, and keep referring back to it.**
+
+You are building a project (e.g. a Telegram news-aggregator bot, a news-to-dashboard feed, a data scraper, etc.). It works on its own now, BUT it must be built so it can **plug into a larger platform called EMDASH later** with minimal rework. Follow the rules below so your project becomes a clean "module" of EMDASH down the road.
+
+---
+
+## 1. What EMDASH is (context)
+
+EMDASH is a modular macro-research platform (Python + SQLite + Dash). It stores time-series and news data in ONE SQLite database and reads everything through a single shared data-access layer. New capabilities are added as **self-contained modules** that plug into that shared data layer — they never create their own separate database or reach into files directly.
+
+Think of EMDASH as a power grid. Your project should be built like an appliance with a **standard plug**, not something hard-wired into the wall.
+
+---
+
+## 2. The golden rules (non-negotiable)
+
+Build your project so that:
+
+1. **Your data output is clean, tabular, and timestamped.** Every record you produce should have: a timestamp (ISO format `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`), and clearly named fields. No output that only exists as a chat message or a screenshot — it must be storable.
+
+2. **Separate "get the data" from "do stuff with it."** Have one part of your code whose only job is to FETCH/CLEAN data and hand back a plain table (a list of rows, or a pandas DataFrame). Keep the Telegram-sending / display / bot logic in a different part. This separation is the single most important thing — it lets EMDASH later call just your fetch part and ignore the rest.
+
+3. **Expose a simple function that returns your data.** Somewhere in your code there should be a function like:
+   ```python
+   def get_records() -> list[dict]:
+       # returns a list of clean records, e.g.
+       # [{"ts": "2026-07-25T09:00:00", "source": "Reuters",
+       #   "tier": "A", "country": "IDN",
+       #   "headline": "...", "url": "...", "topic": "rates"}]
+   ```
+   If EMDASH can call one function and get a clean list back, integration is trivial.
+
+4. **Tag everything you can.** For news especially, try to attach: which country/countries it's about (use 3-letter ISO codes — see section 5), a source name, a credibility tier (A = official/central banks/major wires, B = commentary/bank research, C = blogs/substacks/social/prediction markets), and a topic if possible (rates, inflation, FX, politics, commodities, credit).
+
+5. **Don't hardcode secrets or machine-specific paths.** Put API keys / tokens / chat IDs in a separate `config.py` or a `.env` file, not scattered in code. Use relative paths, not `C:\Users\YourName\...`.
+
+6. **Make it re-runnable safely.** Running your fetcher twice should not create duplicates. Give each record a natural unique key (e.g. the URL for a news item, or timestamp+source). This matches how EMDASH avoids duplicates.
+
+---
+
+## 3. Recommended output schema (match this if you can)
+
+If your project produces **news / messages**, output records shaped like this (field names matter — match them):
+
+| field       | example                          | notes                          |
+|-------------|----------------------------------|--------------------------------|
+| `ts`        | `2026-07-25T09:00:00`            | ISO timestamp                  |
+| `source`    | `Reuters`                        | human-readable source name     |
+| `tier`      | `A`                              | A / B / C credibility          |
+| `iso3_tags` | `IDN,MYS`                        | comma-separated ISO3 countries |
+| `headline`  | `BI holds rate at 5.75%`         | the text                       |
+| `url`       | `https://...`                    | unique per item                |
+| `topic`     | `rates`                          | optional but valuable          |
+| `tone`      | `-0.3`                           | optional sentiment −1..+1      |
+
+If your project produces **numeric time-series** (prices, counts, indices), output:
+
+| field    | example        | notes                          |
+|----------|----------------|--------------------------------|
+| `date`   | `2026-07-25`   | ISO date                       |
+| `series` | `telegram_mentions_IDN` | what it measures       |
+| `value`  | `42`           | the number                     |
+| `source` | `telegram_bot` | where it came from             |
+
+Matching these means EMDASH can drop your output straight into its `news` or a time-series table with almost no translation.
+
+---
+
+## 4. Storage: keep it simple, keep it portable
+
+- If you store data, prefer **one SQLite file** (not many CSVs scattered around, not a cloud DB that needs accounts). SQLite is a single `.db` file, no server, works everywhere.
+- Do **not** commit the data file to git — only commit code. Add the `.db` to `.gitignore`.
+- Better yet: also expose your data as the `get_records()` function above, so EMDASH can pull from you live without even touching your storage.
+
+---
+
+## 5. Country codes (use these — EMDASH keys on ISO3)
+
+Use 3-letter ISO codes so tagging lines up with EMDASH. Examples:
+`IDN` Indonesia, `MYS` Malaysia, `THA` Thailand, `PHL` Philippines, `VNM` Vietnam, `SGP` Singapore, `CHN` China, `KOR` South Korea, `TWN` Taiwan, `IND` India, `BRA` Brazil, `MEX` Mexico, `ZAF` South Africa, `TUR` Turkey, `POL` Poland, `USA` United States, `EMU` Eurozone, `JPN` Japan, `GBR` UK, `AUS` Australia.
+
+If a headline is global / not country-specific, tag it `GLOBAL`.
+
+---
+
+## 6. Folder shape (suggested)
+
+Keep it small and clean:
+```
+yourproject/
+  config.py      # keys, tokens, settings ONLY (no logic)
+  fetch.py       # the FETCH+CLEAN part -> returns clean records
+  app.py / bot.py# your bot / display logic (calls fetch.py)
+  data.sqlite    # optional local store (gitignored)
+  README.md
+```
+The critical line: **`app.py`/`bot.py` should import from `fetch.py`, never the other way around.** EMDASH will later import your `fetch.py` and ignore your bot.
+
+---
+
+## 7. What NOT to do
+
+- ❌ Don't bury the data inside Telegram-only objects that can't be exported.
+- ❌ Don't mix fetching and sending in one giant function.
+- ❌ Don't invent your own country naming ("Indo", "S.Korea") — use ISO3.
+- ❌ Don't hardcode paths/keys.
+- ❌ Don't make running it twice create duplicates.
+
+---
+
+## 8. One-line summary to tell your AI
+
+> "Build this so the data-fetching part is a clean, separate function that returns timestamped, ISO3-tagged, tabular records with no duplicates — so it can plug into a shared SQLite-based platform (EMDASH) later. Keep fetch logic separate from bot/display logic, no hardcoded keys or paths."
+
+If you follow this, connecting your project to EMDASH later will be a few hours of work instead of a rewrite. Questions → ask Nathaniel.
