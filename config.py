@@ -11,10 +11,11 @@ Edit here to:
     - add / change a macro indicator     -> WB_INDICATORS / DBN_SERIES
     - add / change a market series       -> FX handled per-country; MARKET_TICKERS
     - add / change a commodity           -> COMMODITIES
+    - add / change a NEWS feed           -> RSS_FEEDS / GDELT_* / NEWS_*
     - change colours / fonts            -> PALETTE / FONTS
     - turn a whole module on/off        -> FEATURE_FLAGS
 
-Everything downstream (core, ingest, signals, app) reads from here.
+Everything downstream (core, ingest, news_ingest, signals, app) reads from here.
 ===================================================================
 """
 
@@ -39,6 +40,7 @@ FEATURE_FLAGS = {
     "ingest_gdelt":       False,   # Phase 4
     "ingest_predmarkets": False,   # Phase 4
     "ingest_trends":      False,   # Phase 4
+    "ingest_rss":         True,    # NEWS: curated RSS/Atom feeds (news_ingest.py)
     "module_regime_mrc":  False,   # Phase 5
 }
 
@@ -173,6 +175,7 @@ WB_INDICATORS = {
     "RESERVES_USD": "FI.RES.TOTL.CD",
 }
 
+
 # -------------------------------------------------------------------
 # DBNOMICS SERIES  ::  label -> (provider, dataset, series_mask)
 # Higher-frequency macro. Mask uses DBnomics dotted series codes.
@@ -205,6 +208,7 @@ COMMODITIES = {
     "SOYBEAN": "ZS=F",
 }
 
+
 # -------------------------------------------------------------------
 # GLOBAL MARKET SERIES  ::  label -> Yahoo ticker (risk/regime proxies)
 # Used by signals + MRC as global risk-appetite reads.
@@ -227,6 +231,99 @@ MARKET_TICKERS = {
 HISTORY = {
     "macro_years":  25,   # World Bank / DBnomics
     "market_years": 15,   # Yahoo FX / commodities / market
+}
+
+
+# ===================================================================
+# NEWS LAYER  ::  feeds live here (control panel); logic lives in
+# news_ingest.py. All headlines land in the `news` table (core.py).
+# ===================================================================
+
+# -------------------------------------------------------------------
+# RSS_FEEDS  ::  (source_id, name, tier, url)
+# tier A = official / wires | B = research / commentary | C = niche / blogs
+# Add a feed = add a line. news_ingest.py needs NO edits.
+# NOTE: feed URLs drift over time -- if one goes quiet, verify the URL
+# on the publisher's site and update it here. (Verified live Jul-2026.)
+# -------------------------------------------------------------------
+RSS_FEEDS = [
+    # ---- Tier A : central banks / official bodies / wires ----
+    ("fed",       "US Federal Reserve (press)",  "A", "https://www.federalreserve.gov/feeds/press_all.xml"),
+    ("ecb",       "European Central Bank (press)","A", "https://www.ecb.europa.eu/rss/press.html"),
+    ("boe",       "Bank of England (news)",       "A", "https://www.bankofengland.co.uk/rss/news"),
+    ("boj",       "Bank of Japan (what's new)",   "A", "https://www.boj.or.jp/en/rss/whatsnew.xml"),
+    ("boc",       "Bank of Canada",               "A", "https://www.bankofcanada.ca/feed/"),
+    ("imf",       "IMF (news)",                   "A", "https://www.imf.org/en/News/RSS?Language=ENG"),
+    ("bis_press", "BIS (press releases)",         "A", "https://www.bis.org/doclist/all_pressrels.rss"),
+    ("bis_speech","BIS (central banker speeches)","A", "https://www.bis.org/doclist/cbspeeches.rss"),
+    ("ft_em",     "FT Emerging Markets",          "A", "https://www.ft.com/emerging-markets?format=rss"),
+    ("ft_econ",   "FT Global Economy",            "A", "https://www.ft.com/global-economy?format=rss"),
+    ("ft_mkts",   "FT Markets",                   "A", "https://www.ft.com/markets?format=rss"),
+
+    # ---- Tier B : research / think tanks / commentary ----
+    #   (add bank research + think-tank feeds here as you find them)
+    ("bruegel",   "Bruegel (think tank)",         "B", "https://www.bruegel.org/rss.xml"),
+
+    # ---- Tier C : niche / independent / substacks / blogs ----
+    #   Substacks: append '/feed' to the base URL -> instant RSS.
+    #   Example placeholders -- swap for the writers you actually follow:
+    # ("noahpinion", "Noahpinion (Substack)",     "C", "https://www.noahpinion.blog/feed"),
+    # ("em_sherpa",  "EM Sherpa (Substack)",      "C", "https://emsherpa.substack.com/feed"),
+]
+
+# -------------------------------------------------------------------
+# GDELT  ::  free global news firehose (per-country ArtList query).
+# No API key. Rolling ~3-month window. Rate-limited -> we sleep between calls.
+# Treated as a lower tier by default (unfiltered aggregation); the article
+# domain is preserved in the URL so you can promote trusted domains later.
+# -------------------------------------------------------------------
+GDELT_ENABLED     = True
+GDELT_TIER        = "C"      # firehose = default low tier; refine later
+GDELT_TIMESPAN    = "3d"     # how far back per run (e.g. '24h', '3d', '1w')
+GDELT_MAXRECORDS  = 60       # max articles per country per run (<=250)
+GDELT_LANG        = "english"  # restrict to English coverage ("" = all)
+GDELT_EM_ONLY     = True     # True = only pull EM countries (saves volume)
+GDELT_SLEEP_SEC   = 1.2      # pause between country calls (avoid 429s)
+
+# -------------------------------------------------------------------
+# NEWS_COUNTRY_ALIASES  ::  extra keyword -> iso3 hints for tagging
+# headlines that don't literally say the country name (currencies,
+# central banks, capitals, common shorthand). Keys are matched
+# case-insensitively as whole words against the headline.
+# -------------------------------------------------------------------
+NEWS_COUNTRY_ALIASES = {
+    # institutions / shorthand
+    "fed": "USA", "federal reserve": "USA", "fomc": "USA", "treasury": "USA",
+    "ecb": "EMU", "euro area": "EMU", "eurozone": "EMU",
+    "boj": "JPN", "boe": "GBR", "pboc": "CHN", "rbi": "IND",
+    "bank indonesia": "IDN", "bsp": "PHL", "mas": "SGP",
+    # currencies
+    "rupiah": "IDN", "ringgit": "MYS", "baht": "THA", "peso": "PHL",
+    "dong": "VNM", "yuan": "CHN", "renminbi": "CHN", "won": "KOR",
+    "rupee": "IND", "real": "BRA", "lira": "TUR", "rand": "ZAF",
+    "zloty": "POL", "forint": "HUN", "koruna": "CZE", "tenge": "KAZ",
+    "naira": "NGA", "yen": "JPN", "sterling": "GBR",
+}
+
+# -------------------------------------------------------------------
+# NEWS_TOPICS  ::  headline keyword -> Kanban column. Derived at DISPLAY
+# time (news_ingest.topic_of), so no DB column / schema change needed.
+# First bucket whose keywords match wins; order matters.
+# -------------------------------------------------------------------
+NEWS_TOPICS = {
+    "monetary_policy": ["rate", "rates", "central bank", "policy", "hike",
+                         "cut", "hawkish", "dovish", "inflation target",
+                         "monetary", "tightening", "easing"],
+    "inflation":       ["inflation", "cpi", "prices", "deflation",
+                         "disinflation", "ppi", "cost of living"],
+    "growth":          ["gdp", "growth", "recession", "pmi", "output",
+                         "manufacturing", "unemployment", "jobs", "trade"],
+    "politics":        ["election", "government", "president", "coup",
+                         "protest", "sanction", "war", "conflict", "minister",
+                         "parliament", "reform", "fiscal"],
+    "markets":         ["bond", "yield", "equity", "stocks", "currency",
+                         "fx", "default", "credit", "spread", "capital",
+                         "reserves", "devaluation"],
 }
 
 

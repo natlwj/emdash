@@ -1,26 +1,22 @@
 """
 EMDASH :: ingest.py
 ===================================================================
-ALL FETCHERS, one file. Each source is a function with the same
-shape: fetch -> clean -> return tidy rows -> core.write_rows().
-
+ALL FETCHERS. Each source: fetch -> clean -> core.write_rows().
 Driven by config.FEATURE_FLAGS. run_all() loops enabled sources.
-To add a source: write one fetch_* function + one FEATURE_FLAG +
-one SOURCES row in config. Nothing else changes.
 
-Sections:
-    [1] WORLD BANK        (macro, annual)      -> macro_data
-    [2] DBNOMICS          (macro, monthly)     -> macro_data
-    [3] YAHOO FX          (market, daily)      -> market_data
-    [4] YAHOO COMMODITIES + GLOBAL (daily)     -> commodity_data / global_market
-    [5] SEED LOADER       (Bloomberg CSVs)     -> seed_data
-    [6] PHASE-4 STUBS     (GDELT/predmkts/trends)
-    [7] run_all()
+NEW in this version:
+    - skip_existing (default ON): if a country/series already has
+      data in the DB, DON'T re-download it. Makes re-runs fast and
+      lets failed pulls get filled without re-pulling everything.
+    - auto-retry on timeout (2 tries, 45s) -> fewer World Bank fails.
+    - --refresh flag: force re-pull everything (overwrite).
+    - ingest_log freshness stamp per source.
 
 Usage:
-    python ingest.py                # respects FEATURE_FLAGS
-    python ingest.py --only worldbank yahoo_fx
+    python ingest.py                 # normal: fill gaps, skip filled
+    python ingest.py --only worldbank
     python ingest.py --skip-market
+    python ingest.py --refresh       # force full re-pull (overwrite)
 ===================================================================
 """
 
@@ -37,20 +33,36 @@ import config
 import core
 
 WB_BASE = "https://api.worldbank.org/v2"
+TIMEOUT = 45          # was 30; bumped to reduce timeouts
+RETRIES = 2           # try each request up to twice
+
+
+# ===================================================================
+# shared HTTP helper with retry
+# ===================================================================
+def _get_json(url: str):
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            r = requests.get(url, timeout=TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last = e
+            time.sleep(1.5 * (attempt + 1))   # small backoff before retry
+    raise last
 
 
 # ===================================================================
 # [1] WORLD BANK  (macro, annual)
 # ===================================================================
-def _wb_one(iso3: str, code: str, years: int) -> pd.DataFrame:
+def _wb_one(iso3, code, years) -> pd.DataFrame:
     end = dt.date.today().year
     start = end - years
     url = (f"{WB_BASE}/country/{iso3}/indicator/{code}"
            f"?date={start}:{end}&format=json&per_page=1000")
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        payload = r.json()
+        payload = _get_json(url)
     except Exception as e:
         print(f"    [WB] {iso3} {code} FAILED: {e}")
         return pd.DataFrame(columns=["date", "value"])
@@ -61,51 +73,48 @@ def _wb_one(iso3: str, code: str, years: int) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["date", "value"])
 
 
-def fetch_worldbank(years: int | None = None) -> int:
+def fetch_worldbank(years=None, skip_existing=True, replace=False) -> int:
     years = years or config.HISTORY["macro_years"]
-    print(f"[ingest] World Bank -- {years}y annual macro")
+    print(f"[ingest] World Bank -- {years}y annual macro "
+          f"(skip_existing={skip_existing})")
     total = 0
     for iso3, name, *_ in config.COUNTRIES:
         for label, code in config.WB_INDICATORS.items():
+            if skip_existing and core.has_macro(iso3, label):
+                continue
             df = _wb_one(iso3, code, years)
             if df.empty:
                 continue
             rows = [(r.date, iso3, label, r.value, "worldbank", "annual")
                     for r in df.itertuples(index=False)]
-            total += core.write_rows("macro_data", rows)
+            total += core.write_rows("macro_data", rows, replace=replace)
             time.sleep(0.04)
         print(f"    [WB] {iso3} {name}: done")
-    print(f"[ingest] World Bank rows: {total}")
+    core.log_ingest("worldbank", total)
+    print(f"[ingest] World Bank new rows: {total}")
     return total
 
 
 # ===================================================================
-# [2] DBNOMICS  (macro, monthly)  -- IMF/OECD/ECB via one aggregator
+# [2] DBNOMICS  (macro, monthly)
 # ===================================================================
-def _dbnomics_one(provider: str, dataset: str, series: str) -> pd.DataFrame:
-    """Hit DBnomics REST API for a single series code."""
+def _dbnomics_one(provider, dataset, series) -> pd.DataFrame:
     url = (f"https://api.db.nomics.world/v22/series/"
            f"{provider}/{dataset}/{series}?observations=1")
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        js = r.json()
+        js = _get_json(url)
         docs = js["series"]["docs"]
         if not docs:
             return pd.DataFrame(columns=["date", "value"])
         d = docs[0]
-        periods = d.get("period", [])
-        values = d.get("value", [])
         rows = []
-        for p, v in zip(periods, values):
+        for p, v in zip(d.get("period", []), d.get("value", [])):
             if v is None or v == "NA":
                 continue
-            # DBnomics monthly period like '2025-01' -> month-end date
             try:
                 dtp = pd.Period(p, freq="M").to_timestamp("M")
                 rows.append((dtp.strftime("%Y-%m-%d"), float(v)))
             except Exception:
-                # annual or other; best-effort year-end
                 try:
                     rows.append((f"{int(p)}-12-31", float(v)))
                 except Exception:
@@ -116,31 +125,33 @@ def _dbnomics_one(provider: str, dataset: str, series: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "value"])
 
 
-def fetch_dbnomics() -> int:
-    print("[ingest] DBnomics -- monthly macro (IMF/OECD/ECB agg.)")
+def fetch_dbnomics(skip_existing=True, replace=False) -> int:
+    print("[ingest] DBnomics -- monthly macro")
     total = 0
     for label, (provider, dataset, mask) in config.DBN_SERIES.items():
         for iso3, name, *_ in config.COUNTRIES:
+            if skip_existing and core.has_macro(iso3, label):
+                continue
             iso2 = config.iso3_to_iso2(iso3)
             if not iso2:
                 continue
-            series = mask.format(iso2=iso2)
-            df = _dbnomics_one(provider, dataset, series)
+            df = _dbnomics_one(provider, dataset, mask.format(iso2=iso2))
             if df.empty:
                 continue
             rows = [(r.date, iso3, label, r.value, "dbnomics", "monthly")
                     for r in df.itertuples(index=False)]
-            total += core.write_rows("macro_data", rows)
+            total += core.write_rows("macro_data", rows, replace=replace)
             time.sleep(0.05)
         print(f"    [DBN] {label}: done")
-    print(f"[ingest] DBnomics rows: {total}")
+    core.log_ingest("dbnomics", total)
+    print(f"[ingest] DBnomics new rows: {total}")
     return total
 
 
 # ===================================================================
-# [3] YAHOO FX  (market, daily)
+# [3][4] YAHOO  (FX / commodities / global)
 # ===================================================================
-def _yahoo(ticker: str, years: int) -> pd.DataFrame:
+def _yahoo(ticker, years) -> pd.DataFrame:
     import yfinance as yf
     try:
         df = yf.download(ticker, period=f"{years}y", interval="1d",
@@ -160,12 +171,14 @@ def _yahoo(ticker: str, years: int) -> pd.DataFrame:
     return out.dropna()
 
 
-def fetch_yahoo_fx(years: int | None = None) -> int:
+def fetch_yahoo_fx(years=None, skip_existing=True, replace=False) -> int:
     years = years or config.HISTORY["market_years"]
-    print(f"[ingest] Yahoo FX -- {years}y daily")
+    print(f"[ingest] Yahoo FX -- {years}y daily (skip_existing={skip_existing})")
     total = 0
     for iso3, name, _, _, fx in config.COUNTRIES:
         if not fx:
+            continue
+        if skip_existing and core.has_market(iso3, "FX"):
             continue
         df = _yahoo(fx, years)
         if df.empty:
@@ -173,51 +186,51 @@ def fetch_yahoo_fx(years: int | None = None) -> int:
             continue
         rows = [(r.date, iso3, "FX", r.value, "yahoo_fx")
                 for r in df.itertuples(index=False)]
-        total += core.write_rows("market_data", rows)
+        total += core.write_rows("market_data", rows, replace=replace)
         print(f"    [YF] {iso3} {fx}: {len(rows)}")
-    print(f"[ingest] Yahoo FX rows: {total}")
+    core.log_ingest("yahoo_fx", total)
+    print(f"[ingest] Yahoo FX new rows: {total}")
     return total
 
 
-# ===================================================================
-# [4] YAHOO COMMODITIES + GLOBAL MARKET  (daily)
-# ===================================================================
-def fetch_commodities(years: int | None = None) -> int:
+def fetch_commodities(years=None, skip_existing=True, replace=False) -> int:
     years = years or config.HISTORY["market_years"]
     print(f"[ingest] Yahoo commodities -- {years}y daily")
     total = 0
     for label, ticker in config.COMMODITIES.items():
+        if skip_existing and core.has_commodity(label):
+            continue
         df = _yahoo(ticker, years)
         if df.empty:
             print(f"    [YF] {label} {ticker}: no data")
             continue
         rows = [(r.date, label, r.value, "yahoo_cmdty")
                 for r in df.itertuples(index=False)]
-        total += core.write_rows("commodity_data", rows)
+        total += core.write_rows("commodity_data", rows, replace=replace)
         print(f"    [YF] {label}: {len(rows)}")
-    print(f"[ingest] commodity rows: {total}")
 
     print("[ingest] Yahoo global market proxies")
-    gtotal = 0
     for label, ticker in config.MARKET_TICKERS.items():
+        if skip_existing and core.has_global(label):
+            continue
         df = _yahoo(ticker, years)
         if df.empty:
             print(f"    [YF] {label} {ticker}: no data")
             continue
         rows = [(r.date, label, r.value, "yahoo_cmdty")
                 for r in df.itertuples(index=False)]
-        gtotal += core.write_rows("global_market", rows)
+        total += core.write_rows("global_market", rows, replace=replace)
         print(f"    [YF] {label}: {len(rows)}")
-    print(f"[ingest] global_market rows: {gtotal}")
-    return total + gtotal
+    core.log_ingest("yahoo_cmdty", total)
+    print(f"[ingest] commodities+global new rows: {total}")
+    return total
 
 
 # ===================================================================
-# [5] SEED LOADER  -- one-time Bloomberg exports dropped in seed/*.csv
-# Expected CSV columns: date, iso3, series, value[, note]
+# [5] SEED LOADER
 # ===================================================================
-def load_seed() -> int:
-    print("[ingest] seed loader -- Bloomberg/manual CSVs in seed/")
+def load_seed(replace=False) -> int:
+    print("[ingest] seed loader -- CSVs in seed/")
     total = 0
     if not config.SEED_DIR.exists():
         print("    (no seed dir)")
@@ -231,7 +244,7 @@ def load_seed() -> int:
             rows = [(str(r.date), str(r.iso3), str(r.series),
                      float(r.value), str(r.note))
                     for r in df.itertuples(index=False)]
-            total += core.write_rows("seed_data", rows)
+            total += core.write_rows("seed_data", rows, replace=replace)
             print(f"    [seed] {csv.name}: {len(rows)}")
         except Exception as e:
             print(f"    [seed] {csv.name} FAILED: {e}")
@@ -240,21 +253,11 @@ def load_seed() -> int:
 
 
 # ===================================================================
-# [6] PHASE-4 STUBS  (kept minimal; flesh out when flags flip on)
+# [6] PHASE-4 STUBS
 # ===================================================================
-def fetch_gdelt() -> int:
-    print("[ingest] GDELT stub -- enable in Phase 4")
-    return 0
-
-
-def fetch_predmarkets() -> int:
-    print("[ingest] prediction markets stub -- enable in Phase 4")
-    return 0
-
-
-def fetch_trends() -> int:
-    print("[ingest] Google Trends stub -- enable in Phase 4")
-    return 0
+def fetch_gdelt(**kw):       print("[ingest] GDELT stub");        return 0
+def fetch_predmarkets(**kw): print("[ingest] predmarkets stub");  return 0
+def fetch_trends(**kw):      print("[ingest] Trends stub");       return 0
 
 
 # ===================================================================
@@ -268,12 +271,13 @@ _DISPATCH = {
     "gdelt":       ("ingest_gdelt",       fetch_gdelt),
     "predmarkets": ("ingest_predmarkets", fetch_predmarkets),
     "trends":      ("ingest_trends",      fetch_trends),
-    "seed":        (None,                 load_seed),  # always allowed
+    "seed":        (None,                 load_seed),
 }
 
 
-def run_all(only=None, skip_market=False) -> None:
+def run_all(only=None, skip_market=False, refresh=False) -> None:
     core.init_db()
+    skip_existing = not refresh          # --refresh forces full re-pull
     for key, (flag, fn) in _DISPATCH.items():
         if only and key not in only:
             continue
@@ -282,14 +286,19 @@ def run_all(only=None, skip_market=False) -> None:
         if flag is not None and not config.FEATURE_FLAGS.get(flag, False):
             if not only:
                 continue
-        fn()
+        if key == "seed":
+            fn(replace=refresh)
+        else:
+            fn(skip_existing=skip_existing, replace=refresh)
     print("[ingest] table counts:", core.table_counts())
     print("[ingest] done.")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", nargs="*", help="subset of sources to run")
+    ap.add_argument("--only", nargs="*")
     ap.add_argument("--skip-market", action="store_true")
+    ap.add_argument("--refresh", action="store_true",
+                    help="force full re-pull (overwrite existing)")
     args = ap.parse_args()
-    run_all(only=args.only, skip_market=args.skip_market)
+    run_all(only=args.only, skip_market=args.skip_market, refresh=args.refresh)
