@@ -1,31 +1,20 @@
 """
-EMDASH :: app.py
+EMDASH :: app.py   (Event Study v2 + Country polish)  -- fixes pass
 
-THE DASHBOARD. Reads ONLY through core.py; math via signals.py / event_study.py.
-Styling: assets/emdash.css. Editable settings: config.py. This file = logic.
-
-WHAT'S NEW IN THIS VERSION
---------------------------
-1. AUTO-SAVE  ->  emdash_state.json (in the EMDASH folder, like GEMBI/GEMPAD).
-   Every control change writes the whole dashboard state (active tab + every
-   filter/dropdown on all three tabs) to a small JSON file.
-
-   FIX (this version): the layout is now a FUNCTION (serve_layout), so the app
-   re-reads emdash_state.json on EVERY browser refresh -- previously the layout
-   was built once at server start, so a refresh showed stale defaults AND the
-   auto-save then overwrote your good JSON with those defaults. The auto-save
-   callback also now has prevent_initial_call=True, so simply loading/refreshing
-   the page never overwrites your saved state -- only a real control change does.
-
-2. NEWS FEED SPEED  ->  desks/topics pre-computed ONCE at load; date/tier/desk/
-   topic filters are vectorised pandas masks applied BEFORE any cards are built.
-
-3. EVENT STUDY REDESIGN  ->  sentence layout + unit-aware threshold + live helper
-   + plain-English headline (full stats behind an expander).
+FIXES THIS VERSION
+    * Country charts: range-selector buttons no longer overlap the title
+      (buttons moved to the right, extra top margin).
+    * News tier pill: invalid CSS class emd-tier--? replaced with emd-tier--U
+      (a '?' in a CSS selector breaks parsing); display still shows "?".
+    * Cross-sectional bar: bigger value labels, dynamic height (so 40+ countries
+      aren't cramped), wider left margin so country names show.
+    * Compare-all horizon is now a TYPED number box (any N days) with a live grey
+      "(max NNN)" hint of how far the data allows.
+    * Stats tables: plain-English column legend added; compare-all table is now
+      SORTABLE via a "sort by" control (edge / |edge| / mean / hit / country).
 
 RUN
     python -m pip install dash plotly pandas feedparser
-    python news_ingest.py
     python app.py            # -> http://127.0.0.1:9001
 """
 from __future__ import annotations
@@ -60,19 +49,18 @@ F = config.FONTS
 PORT = 9001
 CARDS_PER_COL = 15
 NEWS_READ_LIMIT = 4000
+MAX_SPAGHETTI = 40
 DOMAIN_TIER = getattr(config, "DOMAIN_TIER", {})
 
 TOPIC_LABELS = {
-    "monetary_policy": "Monetary Policy", "inflation": "Inflation",
-    "growth": "Growth", "trade": "Trade", "commodities": "Commodities",
-    "credit_debt": "Credit & Debt", "fx_markets": "FX & Flows",
-    "equities": "Equities", "geopolitics": "Geopolitics",
-    "energy": "Energy", "tech": "Tech", "china": "China", "general": "General",
+    "central_bank": "Central Bank", "econ_data": "Econ Data & Releases",
+    "trade": "Trade", "rates_credit": "Rates & Credit", "fx": "FX",
+    "commodities": "Commodities", "equities": "Equities", "energy": "Energy",
+    "technology": "Technology", "geopolitics": "Geopolitics", "china": "China",
+    "general": "General",
 }
 LABEL_TO_TOPIC = {v: k for k, v in TOPIC_LABELS.items()}
-
 TRANSFORMS = ["Level", "YoY", "Momentum (20)", "Z-score (20)"]
-
 DAY_OPTS = [("1 day", 1), ("2 days", 2), ("3 days", 3), ("4 days", 4),
             ("5 days", 5), ("6 days", 6), ("1 week", 7), ("2 weeks", 14),
             ("3 weeks", 21), ("4 weeks", 28), ("2 months", 60),
@@ -80,11 +68,8 @@ DAY_OPTS = [("1 day", 1), ("2 days", 2), ("3 days", 3), ("4 days", 4),
 
 NAME_BY_ISO = {i: n for i, n, *_ in config.COUNTRIES}
 DESK_BY_ISO = {i: d for i, n, d, *_ in config.COUNTRIES}
-
-DESK_SHORT = {
-    "SEA": "SEA", "EASTASIA": "EAS", "CSASIA": "CSA", "LATAM": "LAT",
-    "MEA": "MEA", "EMEUROPE": "EUR", "G10": "G10",
-}
+FX_ISOS = [i for i, n, d, dm, fx in config.COUNTRIES if fx]
+DESK_SHORT = {d: d for d in config.DESK_LABELS}
 DESK_ORDER = list(config.DESK_LABELS)
 
 COUNTRY_OPTS = sorted(
@@ -95,24 +80,20 @@ INDICATOR_OPTS = sorted(
      for k in list(config.WB_INDICATORS) + list(config.DBN_SERIES)],
     key=lambda o: o["label"])
 
-ES_RULES = [
-    ("crosses ABOVE", "cross_above"),
-    ("crosses BELOW", "cross_below"),
-    ("is ABOVE",      "above"),
-    ("is BELOW",      "below"),
-    ("z-score ABOVE", "z_above"),
-    ("z-score BELOW", "z_below"),
-]
-RULE_VERB = {k: lbl for lbl, k in ES_RULES}
+ES_RULES = [("crosses ABOVE", "cross_above"), ("crosses BELOW", "cross_below"),
+            ("is ABOVE", "above"), ("is BELOW", "below"),
+            ("z-score ABOVE", "z_above"), ("z-score BELOW", "z_below")]
+ES_HORIZONS = (1, 5, 20, 60)
+ES_SORTS = [("Edge (high → low)", "edge_desc"), ("Edge (low → high)", "edge_asc"),
+            ("Biggest move |edge|", "abs"), ("Mean", "mean"),
+            ("Hit rate", "hit"), ("Country A→Z", "name")]
 
-_PCT_LEVEL_INDS = {
-    "GDP_YOY", "CPI_YOY", "CURR_ACC_GDP", "GOV_DEBT_GDP", "UNEMPLOYMENT",
-    "EXPORTS_GDP", "FDI_GDP", "POLICY_RATE",
-}
+_PCT_LEVEL_INDS = {"GDP_YOY", "CPI_YOY", "CURR_ACC_GDP", "GOV_DEBT_GDP",
+                   "UNEMPLOYMENT", "EXPORTS_GDP", "FDI_GDP", "POLICY_RATE"}
+_GLOBAL_DIFF = {"US10Y", "VIX", "MOVE"}
 
 
 def unit_for(indicator: str, transform: str) -> str:
-    """What the THRESHOLD is measured in, given the signal + transform."""
     if transform.startswith("Z-score"):
         return "σ"
     if transform == "YoY" or transform.startswith("Momentum"):
@@ -124,8 +105,25 @@ def unit_for(indicator: str, transform: str) -> str:
     return "pts"
 
 
+def _target_options():
+    opts = [
+        {"label": "— This country —", "value": "ctry:FX", "disabled": True},
+        {"label": "This country · FX", "value": "ctry:FX"},
+        {"label": "This country · Policy rate", "value": "ctry:POLICY_RATE"},
+        {"label": "— Global markets —", "value": "glob:EMB", "disabled": True},
+    ]
+    for k in config.MARKET_TICKERS:
+        opts.append({"label": f"Global · {k}", "value": f"glob:{k}"})
+    opts.append({"label": "— Commodities —", "value": "cmdty:BRENT", "disabled": True})
+    for k in config.COMMODITIES:
+        opts.append({"label": f"Commodity · {k}", "value": f"cmdty:{k}"})
+    return opts
+
+
+TARGET_OPTS = _target_options()
+
 # ===================================================================
-# AUTO-SAVE  ::  whole-dashboard state <-> emdash_state.json
+# AUTO-SAVE
 # ===================================================================
 STATE_PATH = config.ROOT / "emdash_state.json"
 
@@ -144,22 +142,19 @@ def save_state(d: dict) -> None:
         with open(STATE_PATH, "w", encoding="utf-8") as fh:
             json.dump(d, fh, indent=2)
     except Exception:
-        pass  # never let a save failure break the UI
+        pass
 
 
-# Module-global holding the most recently loaded state. serve_layout() refreshes
-# it from disk on every page load; sv() reads it while building components.
 _STATE = load_state()
 
 
 def sv(key, default):
-    """Saved-value: initial control value from emdash_state.json, else default."""
     v = _STATE.get(key, default)
     return v if v is not None else default
 
 
 # ===================================================================
-# DATA HELPERS  (+ caching)
+# DATA HELPERS
 # ===================================================================
 def _domain(url: str) -> str:
     try:
@@ -173,7 +168,7 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", (text or "").lower()).strip()
 
 
-def _desks_for(isos: list[str]) -> list[str]:
+def _desks_for(isos):
     seen = []
     for i in isos:
         d = DESK_BY_ISO.get(i)
@@ -182,8 +177,20 @@ def _desks_for(isos: list[str]) -> list[str]:
     return seen
 
 
+def _human(v) -> str:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "—"
+    a = abs(v)
+    for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if a >= div:
+            return f"{v/div:,.1f}{suf}"
+    return f"{v:,.1f}"
+
+
 _series_cache: dict = {}
 _market_cache: dict = {}
+_global_cache: dict = {}
+_cmdty_cache: dict = {}
 
 
 def cached_series(iso3, indicator):
@@ -200,13 +207,28 @@ def cached_market(iso3, series="FX"):
     return _market_cache[k]
 
 
+def cached_global(series):
+    if series not in _global_cache:
+        try:
+            _global_cache[series] = core.get_global(series)
+        except Exception:
+            _global_cache[series] = pd.DataFrame()
+    return _global_cache[series]
+
+
+def cached_commodity(name):
+    if name not in _cmdty_cache:
+        try:
+            _cmdty_cache[name] = core.get_commodity(name)
+        except Exception:
+            _cmdty_cache[name] = pd.DataFrame()
+    return _cmdty_cache[name]
+
+
 _news_cache: dict = {"df": None}
 
 
 def load_news(limit: int = NEWS_READ_LIMIT, force: bool = False) -> pd.DataFrame:
-    """Return the processed news table. Heavy per-row work (topics, desks,
-    dedup) is done ONCE here and cached for the whole session. The board
-    callback then only does fast vectorised filtering on top."""
     if _news_cache["df"] is not None and not force:
         return _news_cache["df"]
     try:
@@ -243,11 +265,11 @@ def load_news(limit: int = NEWS_READ_LIMIT, force: bool = False) -> pd.DataFrame
     return out
 
 
-def _downsample(s: pd.Series, cap: int = 800) -> pd.Series:
+def _downsample(s, cap=800):
     return s.resample("W").last().dropna() if len(s) > cap else s
 
 
-def _periods_per_year(s: pd.Series) -> int:
+def _periods_per_year(s):
     if len(s) < 3:
         return 1
     gap = s.index.to_series().diff().dt.days.median()
@@ -258,7 +280,7 @@ def _periods_per_year(s: pd.Series) -> int:
     return 1
 
 
-def apply_transform(s: pd.Series, name: str) -> pd.Series:
+def apply_transform(s, name):
     if name == "YoY":
         return sig.yoy(s, periods=_periods_per_year(s))
     if name.startswith("Momentum"):
@@ -271,33 +293,62 @@ def apply_transform(s: pd.Series, name: str) -> pd.Series:
 # ===================================================================
 # FIGURES
 # ===================================================================
-def _fig(title: str, height: int = 320) -> go.Figure:
+def _fig(title, height=320, rangeselector=False):
     fig = go.Figure()
+    xaxis = dict(gridcolor="#EEF0F4", automargin=True, showspikes=True,
+                 spikethickness=1, spikedash="dot", spikecolor=P["muted"],
+                 spikemode="across")
+    top = 52
+    if rangeselector:
+        top = 74                       # extra headroom so buttons clear the title
+        xaxis["rangeselector"] = dict(
+            buttons=[dict(count=1, label="1Y", step="year", stepmode="backward"),
+                     dict(count=5, label="5Y", step="year", stepmode="backward"),
+                     dict(count=10, label="10Y", step="year", stepmode="backward"),
+                     dict(step="all", label="Max")],
+            bgcolor="#F1F4FB", activecolor=P["navy3"],
+            font=dict(size=10, color=P["navy1"]),
+            x=1.0, xanchor="right", y=1.22, yanchor="top")   # buttons top-RIGHT
+        xaxis["rangeslider"] = dict(visible=False)
     fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color=P["navy1"]), x=0.01),
-        template="plotly_white",
+        title=dict(text=title, font=dict(size=13, color=P["navy1"]),
+                   x=0.01, xanchor="left", y=0.99, yanchor="top"),
+        template="plotly_white", hovermode="x unified",
         font=dict(family=F["ui"], color=P["ink"], size=11),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=64, r=18, t=44, b=34), height=height,
+        margin=dict(l=64, r=18, t=top, b=34), height=height,
         colorway=[P["navy2"], P["gold"], P["navy3"], P["good"], P["bad"]],
-        xaxis=dict(gridcolor="#EEF0F4", automargin=True),
-        yaxis=dict(gridcolor="#EEF0F4", automargin=True),
+        xaxis=xaxis, yaxis=dict(gridcolor="#EEF0F4", automargin=True),
     )
     return fig
 
 
+def _last_marker(fig, s, color, unit=""):
+    if s is None or s.empty:
+        return
+    x, y = s.index[-1], float(s.iloc[-1])
+    fig.add_trace(go.Scatter(x=[x], y=[y], mode="markers", showlegend=False,
+                             marker=dict(size=7, color=color),
+                             hovertemplate=f"latest {_human(y)}{unit}<extra></extra>"))
+    fig.add_annotation(x=x, y=y, text=f"  {_human(y)}{unit}", showarrow=False,
+                       xanchor="left", font=dict(size=10, color=color))
+
+
 def macro_fig(iso3, indicator, transform):
     df = cached_series(iso3, indicator)
-    fig = _fig(f"{indicator} · {transform}")
+    fig = _fig(f"{indicator} · {transform}", rangeselector=True)
     if df is None or df.empty:
         fig.add_annotation(text="no data — run ingest.py", showarrow=False,
                            font=dict(color=P["muted"]))
         return fig
     s = df.set_index("date")["value"]
     y = _downsample(apply_transform(s, transform))
-    fig.add_trace(go.Scatter(x=y.index, y=y.values, mode="lines",
-                             line=dict(width=2), fill="tozeroy",
-                             fillcolor="rgba(31,73,125,.06)"))
+    mode = "lines+markers" if len(y) < 60 else "lines"
+    fig.add_trace(go.Scatter(x=y.index, y=y.values, mode=mode, line=dict(width=2),
+                             marker=dict(size=5), fill="tozeroy",
+                             fillcolor="rgba(31,73,125,.06)", name=indicator,
+                             hovertemplate="%{y:.2f}<extra></extra>"))
+    _last_marker(fig, y, P["navy1"])
     if transform.startswith("Z-score"):
         fig.add_hline(y=0, line_dash="dot", line_color=P["muted"])
     return fig
@@ -305,7 +356,7 @@ def macro_fig(iso3, indicator, transform):
 
 def fx_fig(iso3, transform):
     df = cached_market(iso3, "FX")
-    fig = _fig(f"FX (LCY per USD) · {transform}")
+    fig = _fig(f"FX (LCY per USD) · {transform}", rangeselector=True)
     if df is None or df.empty:
         fig.add_annotation(text="no FX (peg / n.a.)", showarrow=False,
                            font=dict(color=P["muted"]))
@@ -313,7 +364,9 @@ def fx_fig(iso3, transform):
     s = df.set_index("date")["value"]
     y = _downsample(apply_transform(s, transform))
     fig.add_trace(go.Scatter(x=y.index, y=y.values, mode="lines",
-                             line=dict(width=2, color=P["gold"])))
+                             line=dict(width=2, color=P["gold"]), name="FX",
+                             hovertemplate="%{y:.3f}<extra></extra>"))
+    _last_marker(fig, y, P["brown"])
     return fig
 
 
@@ -327,8 +380,9 @@ def mini_fig(iso3, indicator, transform="Level"):
         return fig
     s = df.set_index("date")["value"]
     y = _downsample(apply_transform(s, transform))
-    fig.add_trace(go.Scatter(x=y.index, y=y.values, mode="lines",
-                             line=dict(width=1.6)))
+    mode = "lines+markers" if len(y) < 60 else "lines"
+    fig.add_trace(go.Scatter(x=y.index, y=y.values, mode=mode, line=dict(width=1.6),
+                             marker=dict(size=4), hovertemplate="%{y:.2f}<extra></extra>"))
     if transform.startswith("Z-score"):
         fig.add_hline(y=0, line_dash="dot", line_color=P["muted"])
     return fig
@@ -339,10 +393,11 @@ def mini_fig(iso3, indicator, transform="Level"):
 # ===================================================================
 def _news_card(row):
     tier = row["tier"] or "?"
+    tcls = tier if tier in ("A", "B", "C") else "U"   # valid CSS class (no '?')
     src = row["domain"] or row["source_id"] or ""
     meta = [html.Span(src, className="emd-news-src"),
             html.Span("·"), html.Span(str(row["ts"])[:16])]
-    top = [html.Span(tier, className=f"emd-tier emd-tier--{tier}")]
+    top = [html.Span(tier, className=f"emd-tier emd-tier--{tcls}")]
     for d in row["_desks"]:
         top.append(html.Span(DESK_SHORT.get(d, d), className="emd-desk",
                              title=config.DESK_LABELS.get(d, d)))
@@ -379,8 +434,7 @@ def _order_columns(keys, columns_by):
     keys = list(keys)
     if columns_by == "Desk":
         ranked = [d for d in DESK_ORDER if d in keys]
-        rest = sorted(k for k in keys if k not in DESK_ORDER)
-        return ranked + rest
+        return ranked + sorted(k for k in keys if k not in DESK_ORDER)
     return sorted(keys)
 
 
@@ -397,7 +451,6 @@ def news_board(columns_by, desks, tiers, topics, days):
     if df.empty:
         return html.Div("No news yet — run  python news_ingest.py",
                         style={"padding": "28px", "color": P["muted"]})
-
     sub = df
     if days and days < 100000:
         cutoff = dt.datetime.now() - dt.timedelta(days=days)
@@ -408,30 +461,26 @@ def news_board(columns_by, desks, tiers, topics, days):
         dset = set(desks)
         sub = sub[sub["_deskset"].map(lambda ds: bool(ds & dset))]
     if topics:
-        topic_keys = {LABEL_TO_TOPIC.get(t, t) for t in topics}
-        sub = sub[sub["_topicset"].map(lambda ts: bool(ts & topic_keys))]
-
+        tk = {LABEL_TO_TOPIC.get(t, t) for t in topics}
+        sub = sub[sub["_topicset"].map(lambda ts: bool(ts & tk))]
     if sub.empty:
         return html.Div("No headlines match these filters / date range.",
                         style={"padding": "28px", "color": P["muted"]})
-
     cols: dict[str, list] = {}
     for row in sub.to_dict("records"):
         for key in _column_keys(row, columns_by):
             cols.setdefault(key, []).append(row)
-
     board = []
     for col in _order_columns(cols, columns_by):
         total = len(cols[col])
         rows = cols[col][:CARDS_PER_COL]
-        title = _column_title(col, columns_by)
         cards = [_news_card(r) for r in rows]
         if total > CARDS_PER_COL:
             cards.append(html.Div(f"+ {total - CARDS_PER_COL} more · scroll / filter",
                                   style={"fontSize": "11px", "color": P["muted"],
                                          "padding": "8px 0 2px"}))
         board.append(html.Div([
-            html.Div([html.Span(title),
+            html.Div([html.Span(_column_title(col, columns_by)),
                       html.Span(str(total), className="count")],
                      className="emd-col-head"),
             html.Div(cards, className="emd-col-body"),
@@ -450,7 +499,7 @@ def stat_tiles(iso3):
             val, date = "—", ""
         else:
             last = df.dropna().iloc[-1]
-            val = f"{last['value']:,.1f}"
+            val = _human(last["value"])
             date = str(last["date"])[:10]
         tiles.append(html.Div([
             html.Div(ind, className="emd-stat-label"),
@@ -469,29 +518,36 @@ def indicator_grid(iso3, transform="Level"):
 
 
 # ===================================================================
-# EVENT STUDY RENDERING
+# EVENT STUDY RENDERING  (v2)
 # ===================================================================
 def _signal_series(iso3, indicator, transform):
     df = cached_series(iso3, indicator)
     if df is None or df.empty:
         return pd.Series(dtype=float)
-    s = df.set_index("date")["value"]
-    return apply_transform(s, transform).dropna()
+    return apply_transform(df.set_index("date")["value"], transform).dropna()
 
 
-def _target_fx(iso3):
-    df = cached_market(iso3, "FX")
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    return df.set_index("date")["value"].dropna()
-
-
-def _fmt(v, unit):
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return "—"
-    if unit == "USD":
-        return f"{v:,.0f}"
-    return f"{v:,.1f}{unit}"
+def resolve_target(target_value, country):
+    grp, _, key = (target_value or "ctry:FX").partition(":")
+    cname = NAME_BY_ISO.get(country, country)
+    if grp == "ctry" and key == "FX":
+        df = cached_market(country, "FX")
+        s = df.set_index("date")["value"].dropna() if not df.empty else pd.Series(dtype=float)
+        return s, "pct", f"{cname} FX", "%"
+    if grp == "ctry" and key == "POLICY_RATE":
+        df = cached_series(country, "POLICY_RATE")
+        s = df.set_index("date")["value"].dropna() if not df.empty else pd.Series(dtype=float)
+        return s, "diff", f"{cname} policy rate", "pp"
+    if grp == "glob":
+        df = cached_global(key)
+        s = df.set_index("date")["value"].dropna() if not df.empty else pd.Series(dtype=float)
+        kind = "diff" if key in _GLOBAL_DIFF else "pct"
+        return s, kind, f"{key}", ("pt" if kind == "diff" else "%")
+    if grp == "cmdty":
+        df = cached_commodity(key)
+        s = df.set_index("date")["value"].dropna() if not df.empty else pd.Series(dtype=float)
+        return s, "pct", f"{key}", "%"
+    return pd.Series(dtype=float), "pct", target_value, "%"
 
 
 def es_helper(signal, unit, sig_name, transform, rule, threshold):
@@ -503,45 +559,59 @@ def es_helper(signal, unit, sig_name, transform, rule, threshold):
     n_fired = 0
     if es is not None:
         try:
-            ev = es.make_events(signal, rule=rule, threshold=float(threshold))
-            n_fired = int(ev.sum())
+            n_fired = int(es.make_events(signal, rule=rule, threshold=float(threshold)).sum())
         except Exception:
             n_fired = 0
+
+    def f(v):
+        return "—" if v is None or math.isnan(v) else (f"{v:,.0f}" if unit == "USD" else f"{v:,.1f}{unit}")
+
     return html.Div([
         html.Span(f"{sig_name} · {transform}", className="emd-es-helper-lead"),
-        html.Span(f"  Current {_fmt(cur, unit)}", className="emd-es-cur"),
-        html.Span(f"  ·  Range {_fmt(lo, unit)} to {_fmt(hi, unit)}"),
-        html.Span(f"  ·  Median {_fmt(med, unit)}"),
-        html.Span(f"  ·  this threshold fires "),
+        html.Span(f"  Current {f(cur)}", className="emd-es-cur"),
+        html.Span(f"  ·  Range {f(lo)} to {f(hi)}"),
+        html.Span(f"  ·  Median {f(med)}"),
+        html.Span("  ·  this threshold fires "),
         html.Span(f"{n_fired} events",
                   className="emd-es-fires" + ("" if n_fired >= 5 else " emd-es-few")),
     ], className="emd-es-helper")
 
 
-def es_path_fig(res):
-    fig = _fig("Average path after event · cumulative % move in FX", height=340)
-    fig.update_layout(showlegend=True,
-                      legend=dict(orientation="h", y=1.14, x=0.0),
-                      xaxis_title="Trading days after event",
-                      yaxis_title="Cumulative %")
+def es_path_fig(res, tgt_label, unit):
+    yfac = 100 if unit == "%" else 1
+    ytitle = "Cumulative %" if unit == "%" else f"Cumulative move ({unit})"
+    fig = _fig(f"After event · {tgt_label} · typical path + dispersion", height=360)
+    fig.update_layout(showlegend=True, legend=dict(orientation="h", y=1.14, x=0.0),
+                      xaxis_title="Trading days after event", yaxis_title=ytitle,
+                      hovermode="x")
     if res is None or res.path.empty:
         fig.add_annotation(text="no events — loosen the rule / move the threshold",
                            showarrow=False, font=dict(color=P["muted"]))
         return fig
+    paths = res.paths
+    for c in list(paths.columns)[:MAX_SPAGHETTI]:
+        fig.add_trace(go.Scatter(x=list(paths.index), y=(paths[c].values * yfac),
+                                 mode="lines", line=dict(width=0.6, color="rgba(101,147,196,.28)"),
+                                 showlegend=False, hoverinfo="skip"))
+    med, lo, hi = es.path_band(paths, 25, 75)
+    fig.add_trace(go.Scatter(x=list(hi.index), y=(hi.values * yfac), mode="lines",
+                             line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=list(lo.index), y=(lo.values * yfac), mode="lines",
+                             line=dict(width=0), fill="tonexty",
+                             fillcolor="rgba(31,73,125,.10)", name="25–75% band",
+                             hoverinfo="skip"))
     if not res.base_path.empty:
-        fig.add_trace(go.Scatter(
-            x=list(res.base_path.index), y=(res.base_path.values * 100),
-            mode="lines", name="Baseline (any day)",
-            line=dict(width=1.5, color=P["grey"], dash="dot")))
-    fig.add_trace(go.Scatter(
-        x=list(res.path.index), y=(res.path.values * 100),
-        mode="lines", name="After event",
-        line=dict(width=2.6, color=P["navy2"])))
+        fig.add_trace(go.Scatter(x=list(res.base_path.index), y=(res.base_path.values * yfac),
+                                 mode="lines", name="Baseline (any day)",
+                                 line=dict(width=1.5, color=P["grey"], dash="dot")))
+    fig.add_trace(go.Scatter(x=list(res.path.index), y=(res.path.values * yfac),
+                             mode="lines", name="Mean after event",
+                             line=dict(width=2.8, color=P["navy2"])))
     fig.add_hline(y=0, line_dash="dot", line_color=P["muted"])
     return fig
 
 
-def es_headline(res, tgt_iso):
+def es_headline(res, tgt_label, unit):
     if res is None or res.n_events == 0:
         return html.Div([
             html.Div("No events fired.", className="emd-es-head-main"),
@@ -549,53 +619,139 @@ def es_headline(res, tgt_iso):
                      "(the helper above shows how many events each value fires).",
                      className="emd-es-head-sub"),
         ], className="emd-es-headline")
-    tgt = NAME_BY_ISO.get(tgt_iso, tgt_iso)
     n = int(res.summary.loc[20, "n"]) or res.n_events
     mean20 = res.summary.loc[20, "mean"]
     base20 = res.baseline.loc[20, "mean"]
     hit = res.summary.loc[20, "hit_rate"]
-    if mean20 is None or (isinstance(mean20, float) and math.isnan(mean20)):
+    if mean20 is None or math.isnan(mean20):
         return html.Div("Not enough forward data at the 20-day horizon.",
                         className="emd-es-headline")
-    edge20 = mean20 - base20
-    strengthened = mean20 < 0
-    direction = "strengthened" if strengthened else "weakened"
-    icon = "📉" if strengthened else "📈"
-    consistent = round((1 - hit) * n) if strengthened else round(hit * n)
-    main = (f"{icon} {tgt} FX {direction} ~{abs(mean20)*100:.1f}% over the next "
+    edge = mean20 - base20
+    fac = 100 if unit == "%" else 1
+    up = mean20 > 0
+    icon = "📈" if up else "📉"
+    consistent = round(hit * n) if up else round((1 - hit) * n)
+    verb = "rose" if up else "fell"
+    main = (f"{icon} {tgt_label} {verb} ~{abs(mean20)*fac:.1f}{unit} over the next "
             f"20 trading days — {consistent} of {n} times.")
-    sub = (f"vs a normal 20-day drift of {base20*100:+.1f}%  →  "
-           f"edge {edge20*100:+.1f}%   (edge is the signal; everything else "
-           f"is context)")
-    return html.Div([
-        html.Div(main, className="emd-es-head-main"),
-        html.Div(sub, className="emd-es-head-sub"),
-    ], className="emd-es-headline")
+    sub = (f"vs a normal 20-day move of {base20*fac:+.1f}{unit}  →  "
+           f"edge {edge*fac:+.1f}{unit}   (edge is the signal; everything else is context)")
+    return html.Div([html.Div(main, className="emd-es-head-main"),
+                     html.Div(sub, className="emd-es-head-sub")],
+                    className="emd-es-headline")
 
 
-def es_table(res):
+def _col_legend(cross=False):
+    """Plain-English meaning of the stats columns."""
+    items = [
+        ("Events", "how many times the signal fired (small = fragile)"),
+        ("Mean", "average target move after the event"),
+        ("Base", "average move on any random day (benchmark)"),
+        ("Edge", "Mean − Base — the signal (how much the event added)"),
+        ("Hit %", "how often the move was positive after the event"),
+    ]
+    if not cross:
+        items += [("Base hit %", "how often positive on any random day"),
+                  ("Median", "the middle outcome (robust to one weird event)"),
+                  ("t-stat", "rough strength; |t|>2 notable — but ignore when Events is small")]
+    return html.Div([html.Span("How to read: ", className="emd-legend-lead")] +
+                    [html.Span([html.B(k + " "), v + "   ·  "], className="emd-legend-item")
+                     for k, v in items], className="emd-legend")
+
+
+def es_table(res, unit):
     if res is None or res.n_events == 0:
         return html.Div("No events.", style={"padding": "14px", "color": P["muted"]})
+    fac = 100 if unit == "%" else 1
     cmp = res.compare()
-    heads = ["Horizon", "Events", "Mean %", "Base %", "Edge %",
-             "Hit %", "Base hit %", "Median %", "t-stat"]
+    heads = ["Horizon", "Events", f"Mean {unit}", f"Base {unit}", f"Edge {unit}",
+             "Hit %", "Base hit %", f"Median {unit}", "t-stat"]
     thead = html.Thead(html.Tr([html.Th(h) for h in heads]))
     body = []
     for h, r in cmp.iterrows():
-        edge = r["edge"] * 100
-        edge_cls = "emd-pos" if edge > 0 else ("emd-neg" if edge < 0 else "")
+        edge = r["edge"] * fac
+        cls = "emd-pos" if edge > 0 else ("emd-neg" if edge < 0 else "")
         body.append(html.Tr([
-            html.Td(f"{h}d"),
-            html.Td(f"{int(r['n_events'])}"),
-            html.Td(f"{r['mean']*100:+.2f}"),
-            html.Td(f"{r['base_mean']*100:+.2f}"),
-            html.Td(f"{edge:+.2f}", className=edge_cls),
-            html.Td(f"{r['hit_rate']*100:.0f}"),
-            html.Td(f"{r['base_hit_rate']*100:.0f}"),
-            html.Td(f"{r['median']*100:+.2f}"),
+            html.Td(f"{h}d"), html.Td(f"{int(r['n_events'])}"),
+            html.Td(f"{r['mean']*fac:+.2f}"), html.Td(f"{r['base_mean']*fac:+.2f}"),
+            html.Td(f"{edge:+.2f}", className=cls),
+            html.Td(f"{r['hit_rate']*100:.0f}"), html.Td(f"{r['base_hit_rate']*100:.0f}"),
+            html.Td(f"{r['median']*fac:+.2f}"),
             html.Td("—" if pd.isna(r['t_stat']) else f"{r['t_stat']:+.2f}"),
         ]))
-    return html.Table([thead, html.Tbody(body)], className="emd-table")
+    return html.Div([_col_legend(cross=False),
+                     html.Table([thead, html.Tbody(body)], className="emd-table")])
+
+
+def _cross_targets(kind_key):
+    out = {}
+    for iso in FX_ISOS:
+        df = cached_market(iso, "FX") if kind_key == "FX" else cached_series(iso, "POLICY_RATE")
+        if df is not None and not df.empty:
+            out[iso] = df.set_index("date")["value"].dropna()
+    return out
+
+
+def _sort_cross(xs, how):
+    if xs is None or xs.empty:
+        return xs
+    if how == "edge_asc":
+        return xs.sort_values("edge", ascending=True)
+    if how == "abs":
+        return xs.reindex(xs["edge"].abs().sort_values(ascending=False).index)
+    if how == "mean":
+        return xs.sort_values("mean", ascending=False)
+    if how == "hit":
+        return xs.sort_values("hit_rate", ascending=False)
+    if how == "name":
+        return xs.sort_index()
+    return xs.sort_values("edge", ascending=False)   # edge_desc default
+
+
+def es_cross_fig(xs, horizon, xtarget_label):
+    n = len(xs)
+    height = max(420, 26 * n + 150)            # dynamic: room per country
+    fig = _fig(f"Edge by country · {xtarget_label} · {horizon}d after event", height=height)
+    fig.update_layout(margin=dict(l=150, r=70, t=60, b=44),
+                      xaxis_title="Edge % (conditional − baseline)", yaxis_title="",
+                      hovermode="closest",
+                      uniformtext_minsize=9, uniformtext_mode="hide")
+    if xs is None or xs.empty:
+        fig.add_annotation(text="no events / no data — loosen the rule",
+                           showarrow=False, font=dict(color=P["muted"]))
+        return fig
+    xsb = xs.sort_values("edge")               # bar always ranked by edge
+    isos = list(xsb.index)
+    labels = [f"{NAME_BY_ISO.get(i,i)} ({i})" for i in isos]
+    edges = (xsb["edge"] * 100).tolist()
+    colors = [P["good"] if e > 0 else P["bad"] for e in edges]
+    text = [f"{e:+.1f}%" for e in edges]
+    fig.add_trace(go.Bar(x=edges, y=labels, orientation="h", marker_color=colors,
+                         text=text, textposition="outside", textfont=dict(size=11),
+                         cliponaxis=False,
+                         hovertemplate="%{y}<br>edge %{x:+.2f}%<extra></extra>"))
+    fig.add_vline(x=0, line_dash="dot", line_color=P["muted"])
+    return fig
+
+
+def es_cross_table(xs):
+    if xs is None or xs.empty:
+        return html.Div("No events / no data.", style={"padding": "14px", "color": P["muted"]})
+    heads = ["Country", "Events", "Mean %", "Base %", "Edge %", "Hit %"]
+    thead = html.Thead(html.Tr([html.Th(h) for h in heads]))
+    body = []
+    for iso, r in xs.iterrows():
+        edge = r["edge"] * 100
+        cls = "emd-pos" if edge > 0 else ("emd-neg" if edge < 0 else "")
+        body.append(html.Tr([
+            html.Td(f"{NAME_BY_ISO.get(iso, iso)} ({iso})"),
+            html.Td(f"{int(r['n'])}"), html.Td(f"{r['mean']*100:+.2f}"),
+            html.Td(f"{r['base_mean']*100:+.2f}"),
+            html.Td(f"{edge:+.2f}", className=cls),
+            html.Td(f"{r['hit_rate']*100:.0f}"),
+        ]))
+    return html.Div([_col_legend(cross=True),
+                     html.Table([thead, html.Tbody(body)], className="emd-table")])
 
 
 # ===================================================================
@@ -620,16 +776,11 @@ _filter = lambda label, comp: html.Div(
 
 
 def serve_layout():
-    """Built fresh on EVERY page load. We re-read emdash_state.json here so a
-    browser refresh restores your last view (a static layout would only ever
-    reflect the state at server-start time)."""
     global _STATE
     _STATE = load_state()
     return html.Div([
-        dcc.Store(id="_persist_sink"),   # auto-save target (data ignored)
-
+        dcc.Store(id="_persist_sink"),
         html.Div([
-            html.Div(className="emd-mark"),
             html.Div("EMDASH", className="emd-logo"),
             html.Div(className="emd-title-sep"),
             html.Div("EM Macro Research OS", className="emd-tagline"),
@@ -642,9 +793,8 @@ def serve_layout():
                  className="emd-tabs", children=[
 
             # ---------------- NEWS ----------------
-            dcc.Tab(label="News Feed", value="news",
-                    className="emd-tab", selected_className="emd-tab--selected",
-                    children=[
+            dcc.Tab(label="News Feed", value="news", className="emd-tab",
+                    selected_className="emd-tab--selected", children=[
                 html.Div([
                     _filter("Columns by", dcc.Dropdown(
                         id="columns-by", value=sv("columns_by", "Country"),
@@ -667,7 +817,7 @@ def serve_layout():
                                  {"label": "C · Firehose", "value": "C"}])),
                     _filter("Topic", dcc.Dropdown(
                         id="f-topic", multi=True, placeholder="All topics",
-                        value=sv("f_topic", []), style={"minWidth": "190px"},
+                        value=sv("f_topic", []), style={"minWidth": "200px"},
                         options=[{"label": v, "value": v}
                                  for k, v in TOPIC_LABELS.items() if k != "general"])),
                     html.Button("🔄 Refresh news", id="refresh-news", n_clicks=0,
@@ -677,18 +827,15 @@ def serve_layout():
             ]),
 
             # ---------------- COUNTRY ----------------
-            dcc.Tab(label="Country Indicators", value="country",
-                    className="emd-tab", selected_className="emd-tab--selected",
-                    children=[
+            dcc.Tab(label="Country Indicators", value="country", className="emd-tab",
+                    selected_className="emd-tab--selected", children=[
                 html.Div([
                     _filter("Country", dcc.Dropdown(
                         id="country", clearable=False, style={"width": "230px"},
-                        value=sv("country", COUNTRY_OPTS[0]["value"]),
-                        options=COUNTRY_OPTS)),
+                        value=sv("country", COUNTRY_OPTS[0]["value"]), options=COUNTRY_OPTS)),
                     _filter("Indicator", dcc.Dropdown(
                         id="indicator", clearable=False, style={"width": "220px"},
-                        value=sv("indicator", INDICATOR_OPTS[0]["value"]),
-                        options=INDICATOR_OPTS)),
+                        value=sv("indicator", INDICATOR_OPTS[0]["value"]), options=INDICATOR_OPTS)),
                     _filter("Transform", dcc.Dropdown(
                         id="transform", clearable=False, style={"width": "180px"},
                         value=sv("transform", "Level"),
@@ -700,59 +847,86 @@ def serve_layout():
                 ], className="emd-controls"),
                 html.Div(id="stat-tiles"),
                 dcc.Loading(html.Div([
-                    html.Div(dcc.Graph(id="macro-graph",
-                                       config={"displayModeBar": False}),
+                    html.Div(dcc.Graph(id="macro-graph", config={"displayModeBar": False}),
                              className="emd-card"),
-                    html.Div(dcc.Graph(id="fx-graph",
-                                       config={"displayModeBar": False}),
+                    html.Div(dcc.Graph(id="fx-graph", config={"displayModeBar": False}),
                              className="emd-card"),
                 ], className="emd-grid-2"), type="default", color=P["navy2"]),
                 dcc.Loading(html.Div(id="indicator-grid"), type="default", color=P["navy2"]),
             ]),
 
-            # ---------------- EVENT STUDY ----------------
-            dcc.Tab(label="Event Study", value="eventstudy",
-                    className="emd-tab", selected_className="emd-tab--selected",
-                    children=[
+            # ---------------- EVENT STUDY (v2) ----------------
+            dcc.Tab(label="Event Study", value="eventstudy", className="emd-tab",
+                    selected_className="emd-tab--selected", children=[
+                html.Div([
+                    dcc.RadioItems(
+                        id="es-mode", value=sv("es_mode", "one"),
+                        options=[{"label": " One country", "value": "one"},
+                                 {"label": " Compare all countries", "value": "cross"}],
+                        className="emd-es-mode", inline=True),
+                ], className="emd-es-modebar"),
+
                 html.Div([
                     html.Div([
                         _word("When"),
                         _inline(dcc.Dropdown(
                             id="es-sig-country", clearable=False,
-                            value=sv("es_sig_country", COUNTRY_OPTS[0]["value"]),
-                            options=COUNTRY_OPTS, style={"width": "185px"})),
+                            value=sv("es_sig_country", "USA"),
+                            options=COUNTRY_OPTS, style={"width": "180px"})),
                         _word("’s"),
                         _inline(dcc.Dropdown(
                             id="es-sig-ind", clearable=False,
                             value=sv("es_sig_ind", INDICATOR_OPTS[0]["value"]),
-                            options=INDICATOR_OPTS, style={"width": "175px"})),
+                            options=INDICATOR_OPTS, style={"width": "170px"})),
                         _word("("),
                         _inline(dcc.Dropdown(
                             id="es-transform", clearable=False,
                             value=sv("es_transform", "Level"),
                             options=[{"label": t, "value": t} for t in TRANSFORMS],
-                            style={"width": "155px"})),
+                            style={"width": "150px"})),
                         _word(")"),
                         _inline(dcc.Dropdown(
                             id="es-rule", clearable=False,
                             value=sv("es_rule", "cross_above"),
-                            options=[{"label": lbl, "value": key}
-                                     for lbl, key in ES_RULES],
-                            style={"width": "165px"})),
-                        _inline(dcc.Input(
-                            id="es-threshold", type="number",
-                            value=sv("es_threshold", 0), debounce=True,
-                            className="emd-input", style={"width": "82px"})),
+                            options=[{"label": lbl, "value": key} for lbl, key in ES_RULES],
+                            style={"width": "160px"})),
+                        _inline(dcc.Input(id="es-threshold", type="number",
+                                          value=sv("es_threshold", 0), debounce=True,
+                                          className="emd-input", style={"width": "80px"})),
                         html.Span(id="es-unit", className="emd-s-unit"),
                     ], className="emd-sentence"),
+
                     html.Div([
                         _word("→ show what"),
                         _inline(dcc.Dropdown(
-                            id="es-tgt-country", clearable=False,
-                            value=sv("es_tgt_country", COUNTRY_OPTS[0]["value"]),
-                            options=COUNTRY_OPTS, style={"width": "185px"})),
-                        _word("’s FX did over the next 1 / 5 / 20 / 60 trading days."),
-                    ], className="emd-sentence"),
+                            id="es-target", clearable=False,
+                            value=sv("es_target", "ctry:FX"),
+                            options=TARGET_OPTS, style={"width": "260px"})),
+                        _word("did over the next 1 / 5 / 20 / 60 trading days."),
+                    ], id="es-row-one", className="emd-sentence"),
+
+                    html.Div([
+                        _word("→ rank every country’s"),
+                        _inline(dcc.Dropdown(
+                            id="es-xtarget", clearable=False,
+                            value=sv("es_xtarget", "FX"),
+                            options=[{"label": "FX", "value": "FX"},
+                                     {"label": "Policy rate", "value": "POLICY_RATE"}],
+                            style={"width": "150px"})),
+                        _word("response at"),
+                        _inline(dcc.Input(id="es-horizon", type="number", min=1,
+                                          value=sv("es_horizon", 20), debounce=True,
+                                          className="emd-input", style={"width": "72px"})),
+                        _word("days"),
+                        html.Span(id="es-horizon-max", className="emd-s-hint"),
+                        _word("· sort by"),
+                        _inline(dcc.Dropdown(
+                            id="es-xsort", clearable=False,
+                            value=sv("es_xsort", "edge_desc"),
+                            options=[{"label": lbl, "value": v} for lbl, v in ES_SORTS],
+                            style={"width": "175px"})),
+                    ], id="es-row-cross", className="emd-sentence"),
+
                     html.Div(id="es-helper-wrap"),
                 ], className="emd-es-builder"),
 
@@ -762,12 +936,11 @@ def serve_layout():
                                      className="emd-card"),
                             type="default", color=P["navy2"]),
                 html.Details([
-                    html.Summary("▸ Show full stats (all horizons)"),
+                    html.Summary("▸ Show full stats"),
                     html.Div(id="es-table-wrap", className="emd-card"),
-                ], className="emd-es-details"),
+                ], className="emd-es-details", open=True),
             ]),
         ]),
-
         html.Div("EMDASH · local build · reads emdash.sqlite · state → emdash_state.json",
                  className="emd-footer"),
     ])
@@ -814,71 +987,106 @@ def _grid(show, iso3, transform):
     ])
 
 
-@app.callback(Output("es-unit", "children"),
-              Output("es-helper-wrap", "children"),
-              Output("es-headline-wrap", "children"),
-              Output("es-graph", "figure"),
-              Output("es-table-wrap", "children"),
+@app.callback(Output("es-row-one", "style"), Output("es-row-cross", "style"),
+              Input("es-mode", "value"))
+def _es_rows(mode):
+    show, hide = {}, {"display": "none"}
+    return (hide, show) if mode == "cross" else (show, hide)
+
+
+@app.callback(Output("es-unit", "children"), Output("es-helper-wrap", "children"),
+              Output("es-headline-wrap", "children"), Output("es-graph", "figure"),
+              Output("es-table-wrap", "children"), Output("es-horizon-max", "children"),
+              Input("es-mode", "value"),
               Input("es-sig-country", "value"), Input("es-sig-ind", "value"),
               Input("es-transform", "value"), Input("es-rule", "value"),
-              Input("es-threshold", "value"), Input("es-tgt-country", "value"))
-def _eventstudy(sig_iso, sig_ind, transform, rule, threshold, tgt_iso):
+              Input("es-threshold", "value"), Input("es-target", "value"),
+              Input("es-xtarget", "value"), Input("es-horizon", "value"),
+              Input("es-xsort", "value"))
+def _eventstudy(mode, sig_iso, sig_ind, transform, rule, threshold,
+                target_value, xtarget, horizon, xsort):
     unit = unit_for(sig_ind, transform)
     sig_name = NAME_BY_ISO.get(sig_iso, sig_iso)
     signal = _signal_series(sig_iso, sig_ind, transform)
     thr = float(threshold) if threshold is not None else 0.0
-
     helper = es_helper(signal, unit, sig_name, transform, rule, thr)
 
     if es is None:
-        fig = _fig("Event Study")
-        fig.add_annotation(text="event_study.py not found in folder",
-                           showarrow=False, font=dict(color=P["bad"]))
-        return unit, helper, "", fig, html.Div("event_study.py missing.")
+        f = _fig("Event Study"); f.add_annotation(text="event_study.py not found",
+                                                   showarrow=False, font=dict(color=P["bad"]))
+        return unit, helper, "", f, html.Div("event_study.py missing."), ""
 
-    target = _target_fx(tgt_iso)
-    if signal.empty or target.empty:
-        fig = _fig("Event Study")
-        msg = ("No FX for this target (peg / n.a.)" if target.empty
-               else "No signal data — run ingest.py")
-        fig.add_annotation(text=msg, showarrow=False, font=dict(color=P["muted"]))
-        head = html.Div(msg, className="emd-es-headline")
-        return unit, helper, head, fig, html.Div(msg, style={"color": P["muted"]})
+    if signal.empty:
+        f = _fig("Event Study")
+        f.add_annotation(text="No signal data — run ingest.py", showarrow=False,
+                         font=dict(color=P["muted"]))
+        return (unit, helper, html.Div("No signal data.", className="emd-es-headline"),
+                f, "", "")
 
+    if mode == "cross":
+        targets = _cross_targets(xtarget)
+        # dynamic max horizon = shortest available target series (so all have data)
+        maxh = min((len(s) for s in targets.values()), default=250)
+        maxh = max(1, maxh - 1)
+        h = int(horizon) if horizon else 20
+        h = max(1, min(h, maxh))
+        kind = "diff" if xtarget == "POLICY_RATE" else "pct"
+        xs = es.cross_sectional(signal, targets, rule=rule, threshold=thr,
+                                window=20, horizon=h, kind=kind)
+        xs_sorted = _sort_cross(xs, xsort)
+        xlabel = "FX" if xtarget == "FX" else "policy rate"
+        n_ev = int(es.make_events(signal, rule=rule, threshold=thr).sum())
+        head = html.Div([
+            html.Div(f"🌐 Cross-section: {len(xs)} countries ranked by {h}-day "
+                     f"{xlabel} edge after the signal fired ({n_ev} events).",
+                     className="emd-es-head-main"),
+            html.Div("Green = that country's FX/rate moved MORE than its own baseline "
+                     "when the signal fired; red = less. Longer bar = more exposed.",
+                     className="emd-es-head-sub"),
+        ], className="emd-es-headline")
+        return (unit, helper, head, es_cross_fig(xs, h, xlabel),
+                es_cross_table(xs_sorted), f"(max {maxh})")
+
+    target, kind, tgt_label, tunit = resolve_target(target_value, sig_iso)
+    if target.empty:
+        f = _fig("Event Study")
+        f.add_annotation(text=f"No data for target: {tgt_label}", showarrow=False,
+                         font=dict(color=P["muted"]))
+        head = html.Div(f"No data for target: {tgt_label} "
+                        "(e.g. USA/pegs have no FX — try a Global target).",
+                        className="emd-es-headline")
+        return unit, helper, head, f, "", ""
     res = es.event_study(target, signal, rule=rule, threshold=thr,
-                         horizons=(1, 5, 20, 60), kind="pct")
-    return (unit, helper, es_headline(res, tgt_iso),
-            es_path_fig(res), es_table(res))
+                         horizons=ES_HORIZONS, kind=kind)
+    return (unit, helper, es_headline(res, tgt_label, tunit),
+            es_path_fig(res, tgt_label, tunit), es_table(res, tunit), "")
 
 
-# ---- AUTO-SAVE: a REAL control change writes the whole state to JSON. ----
-# prevent_initial_call=True is critical: without it this fires on every page
-# load/refresh and would overwrite your saved JSON with the just-restored values
-# before you touch anything.
 @app.callback(Output("_persist_sink", "data"),
               Input("tabs", "value"),
               Input("columns-by", "value"), Input("f-days", "value"),
-              Input("f-desk", "value"), Input("f-tier", "value"),
-              Input("f-topic", "value"),
+              Input("f-desk", "value"), Input("f-tier", "value"), Input("f-topic", "value"),
               Input("country", "value"), Input("indicator", "value"),
               Input("transform", "value"), Input("show-grid", "value"),
+              Input("es-mode", "value"),
               Input("es-sig-country", "value"), Input("es-sig-ind", "value"),
               Input("es-transform", "value"), Input("es-rule", "value"),
-              Input("es-threshold", "value"), Input("es-tgt-country", "value"),
+              Input("es-threshold", "value"), Input("es-target", "value"),
+              Input("es-xtarget", "value"), Input("es-horizon", "value"),
+              Input("es-xsort", "value"),
               prevent_initial_call=True)
 def _persist(tab, columns_by, f_days, f_desk, f_tier, f_topic,
-             country, indicator, transform, show_grid,
+             country, indicator, transform, show_grid, es_mode,
              es_sig_country, es_sig_ind, es_transform, es_rule,
-             es_threshold, es_tgt_country):
+             es_threshold, es_target, es_xtarget, es_horizon, es_xsort):
     save_state({
-        "tab": tab,
-        "columns_by": columns_by, "f_days": f_days, "f_desk": f_desk,
-        "f_tier": f_tier, "f_topic": f_topic,
-        "country": country, "indicator": indicator, "transform": transform,
-        "show_grid": show_grid,
-        "es_sig_country": es_sig_country, "es_sig_ind": es_sig_ind,
-        "es_transform": es_transform, "es_rule": es_rule,
-        "es_threshold": es_threshold, "es_tgt_country": es_tgt_country,
+        "tab": tab, "columns_by": columns_by, "f_days": f_days, "f_desk": f_desk,
+        "f_tier": f_tier, "f_topic": f_topic, "country": country,
+        "indicator": indicator, "transform": transform, "show_grid": show_grid,
+        "es_mode": es_mode, "es_sig_country": es_sig_country, "es_sig_ind": es_sig_ind,
+        "es_transform": es_transform, "es_rule": es_rule, "es_threshold": es_threshold,
+        "es_target": es_target, "es_xtarget": es_xtarget, "es_horizon": es_horizon,
+        "es_xsort": es_xsort,
     })
     return {}
 

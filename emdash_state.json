@@ -1,22 +1,24 @@
 {
-  "tab": "country",
-  "columns_by": "Country",
+  "tab": "eventstudy",
+  "columns_by": "Desk",
   "f_days": 7,
-  "f_desk": [
-    "LATAM"
-  ],
+  "f_desk": [],
   "f_tier": [],
   "f_topic": [],
-  "country": "BGD",
+  "country": "BRA",
   "indicator": "CPI_INDEX_M",
   "transform": "Level",
   "show_grid": [
     "on"
   ],
+  "es_mode": "one",
   "es_sig_country": "USA",
   "es_sig_ind": "POLICY_RATE",
   "es_transform": "Level",
   "es_rule": "cross_above",
   "es_threshold": 5,
-  "es_tgt_country": "USA"
+  "es_target": "cmdty:NATGAS",
+  "es_xtarget": "POLICY_RATE",
+  "es_horizon": 20,
+  "es_xsort": "edge_desc"
 }
