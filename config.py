@@ -12,6 +12,9 @@ Edit here to:
     - add / change a market series       -> FX handled per-country; MARKET_TICKERS
     - add / change a commodity           -> COMMODITIES
     - add / change a NEWS feed           -> RSS_FEEDS / GDELT_* / NEWS_*
+    - promote a news domain's tier       -> DOMAIN_TIER
+    - add / change news topics           -> NEWS_TOPICS
+    - tag people/places to a country     -> NEWS_COUNTRY_ALIASES
     - change colours / fonts            -> PALETTE / FONTS
     - turn a whole module on/off        -> FEATURE_FLAGS
 
@@ -25,75 +28,64 @@ from pathlib import Path
 # PATHS
 # -------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "emdash.sqlite"      # the ONE data file (gitignored)
-SEED_DIR = ROOT / "seed"              # one-time paid-source exports (Bloomberg etc.)
+DB_PATH = ROOT / "emdash.sqlite"
+SEED_DIR = ROOT / "seed"
 
 
 # -------------------------------------------------------------------
-# FEATURE FLAGS  -- flip a module on/off without touching other code
+# FEATURE FLAGS
 # -------------------------------------------------------------------
 FEATURE_FLAGS = {
     "ingest_worldbank":   True,
     "ingest_dbnomics":    True,
     "ingest_yahoo_fx":    True,
     "ingest_commodities": True,
-    "ingest_gdelt":       False,   # Phase 4
-    "ingest_predmarkets": False,   # Phase 4
-    "ingest_trends":      False,   # Phase 4
-    "ingest_rss":         True,    # NEWS: curated RSS/Atom feeds (news_ingest.py)
-    "module_regime_mrc":  False,   # Phase 5
+    "ingest_gdelt":       False,
+    "ingest_predmarkets": False,
+    "ingest_trends":      False,
+    "ingest_rss":         True,
+    "module_regime_mrc":  False,
 }
 
 
 # -------------------------------------------------------------------
 # COUNTRIES  ::  (iso3, name, desk, dm_em, fx_ticker)
-# -------------------------------------------------------------------
-# desk = SMUEM's 6 EM desks + "G10" for developed markets.
-# fx_ticker is the Yahoo Finance symbol (LCY per USD). "" = none / peg / n.a.
-#
 # DESKS: SEA | EASTASIA | CSASIA | LATAM | MEA | EMEUROPE | G10
 # -------------------------------------------------------------------
 COUNTRIES = [
-    # ---- SEA ----
     ("IDN", "Indonesia",     "SEA",      "EM", "IDR=X"),
     ("MYS", "Malaysia",      "SEA",      "EM", "MYR=X"),
     ("THA", "Thailand",      "SEA",      "EM", "THB=X"),
     ("PHL", "Philippines",   "SEA",      "EM", "PHP=X"),
     ("VNM", "Vietnam",       "SEA",      "EM", "VND=X"),
     ("SGP", "Singapore",     "SEA",      "DM", "SGD=X"),
-    # ---- EAST ASIA ----
     ("CHN", "China",         "EASTASIA", "EM", "CNY=X"),
     ("KOR", "South Korea",   "EASTASIA", "EM", "KRW=X"),
     ("TWN", "Taiwan",        "EASTASIA", "EM", "TWD=X"),
     ("HKG", "Hong Kong",     "EASTASIA", "DM", "HKD=X"),
-    # ---- CENTRAL / SOUTH ASIA ----
     ("IND", "India",         "CSASIA",   "EM", "INR=X"),
     ("PAK", "Pakistan",      "CSASIA",   "EM", "PKR=X"),
     ("BGD", "Bangladesh",    "CSASIA",   "EM", "BDT=X"),
     ("LKA", "Sri Lanka",     "CSASIA",   "EM", "LKR=X"),
     ("KAZ", "Kazakhstan",    "CSASIA",   "EM", "KZT=X"),
-    # ---- LATAM ----
     ("BRA", "Brazil",        "LATAM",    "EM", "BRL=X"),
     ("MEX", "Mexico",        "LATAM",    "EM", "MXN=X"),
     ("CHL", "Chile",         "LATAM",    "EM", "CLP=X"),
     ("COL", "Colombia",      "LATAM",    "EM", "COP=X"),
     ("PER", "Peru",          "LATAM",    "EM", "PEN=X"),
     ("ARG", "Argentina",     "LATAM",    "EM", "ARS=X"),
-    # ---- MEA (Middle East + Africa) ----
     ("ZAF", "South Africa",  "MEA",      "EM", "ZAR=X"),
     ("SAU", "Saudi Arabia",  "MEA",      "EM", "SAR=X"),
     ("ARE", "UAE",           "MEA",      "EM", "AED=X"),
     ("EGY", "Egypt",         "MEA",      "EM", "EGP=X"),
     ("NGA", "Nigeria",       "MEA",      "EM", "NGN=X"),
     ("KEN", "Kenya",         "MEA",      "EM", "KES=X"),
-    # ---- EMERGING EUROPE ----
     ("POL", "Poland",        "EMEUROPE", "EM", "PLN=X"),
     ("HUN", "Hungary",       "EMEUROPE", "EM", "HUF=X"),
     ("CZE", "Czechia",       "EMEUROPE", "EM", "CZK=X"),
     ("ROU", "Romania",       "EMEUROPE", "EM", "RON=X"),
     ("TUR", "Turkey",        "EMEUROPE", "EM", "TRY=X"),
-    # ---- G10 (Developed Markets) ----
-    ("USA", "United States", "G10",      "DM", ""),       # base currency
+    ("USA", "United States", "G10",      "DM", ""),
     ("EMU", "Eurozone",      "G10",      "DM", "EUR=X"),
     ("JPN", "Japan",         "G10",      "DM", "JPY=X"),
     ("GBR", "United Kingdom","G10",      "DM", "GBP=X"),
@@ -105,7 +97,6 @@ COUNTRIES = [
     ("SWE", "Sweden",        "G10",      "DM", "SEK=X"),
 ]
 
-# Human-readable desk labels for the UI
 DESK_LABELS = {
     "SEA":      "Southeast Asia",
     "EASTASIA": "East Asia",
@@ -118,35 +109,24 @@ DESK_LABELS = {
 
 
 # -------------------------------------------------------------------
-# TAGS  ::  derived cross-country groups. (iso3, tag)
-# One country can carry many tags. Queried on-click in the dashboard.
+# TAGS  ::  (iso3, tag)
 # -------------------------------------------------------------------
 TAGS = [
-    # oil / energy exporters
     ("SAU", "oil_exporter"), ("ARE", "oil_exporter"), ("NGA", "oil_exporter"),
     ("NOR", "oil_exporter"), ("COL", "oil_exporter"), ("KAZ", "oil_exporter"),
-    # metals / mining exporters
     ("CHL", "metals_exporter"), ("PER", "metals_exporter"),
-    ("ZAF", "metals_exporter"), ("AUS", "metals_exporter"),
-    ("BRA", "metals_exporter"),
-    # ag exporters
+    ("ZAF", "metals_exporter"), ("AUS", "metals_exporter"), ("BRA", "metals_exporter"),
     ("BRA", "ag_exporter"), ("ARG", "ag_exporter"), ("IDN", "ag_exporter"),
     ("MYS", "ag_exporter"),
-    # tech / semis exporters
     ("KOR", "tech_exporter"), ("TWN", "tech_exporter"), ("SGP", "tech_exporter"),
-    # USD peg / managed
     ("SAU", "usd_peg"), ("ARE", "usd_peg"), ("HKG", "usd_peg"),
-    # high-yield / fragile
     ("TUR", "high_yield"), ("ARG", "high_yield"), ("EGY", "high_yield"),
     ("NGA", "high_yield"), ("PAK", "high_yield"),
 ]
 
 
 # -------------------------------------------------------------------
-# SOURCE REGISTRY  ::  (source_id, name, type, tier, frequency)
-# type: macro | market | commodity | alt | news
-# tier: A (primary/official) | B (commentary) | C (informal)
-# The ingest layer loops these; each maps to a fetcher in ingest.py.
+# SOURCE REGISTRY
 # -------------------------------------------------------------------
 SOURCES = [
     ("worldbank",   "World Bank",        "macro",     "A", "annual"),
@@ -162,7 +142,7 @@ SOURCES = [
 
 
 # -------------------------------------------------------------------
-# WORLD BANK INDICATORS  ::  label -> WB code   (annual, broad coverage)
+# WORLD BANK INDICATORS
 # -------------------------------------------------------------------
 WB_INDICATORS = {
     "GDP_YOY":      "NY.GDP.MKTP.KD.ZG",
@@ -175,79 +155,38 @@ WB_INDICATORS = {
     "RESERVES_USD": "FI.RES.TOTL.CD",
 }
 
-
-# -------------------------------------------------------------------
-# DBNOMICS SERIES  ::  label -> (provider, dataset, series_mask)
-# Higher-frequency macro. Mask uses DBnomics dotted series codes.
-# NOTE: coverage varies by country; ingest flags gaps rather than faking.
-# These are examples for the pipeline; expand freely -- config only.
-# -------------------------------------------------------------------
 DBN_SERIES = {
-    # IMF International Financial Statistics - policy rate (monthly)
-    # provider/dataset/series pattern; ingest.py fills country code in mask
     "POLICY_RATE":  ("IMF", "IFS", "M.{iso2}.FPOLM_PA"),
     "CPI_INDEX_M":  ("IMF", "IFS", "M.{iso2}.PCPI_IX"),
 }
 
 
 # -------------------------------------------------------------------
-# COMMODITIES  ::  label -> Yahoo futures ticker
+# COMMODITIES / GLOBAL MARKET
 # -------------------------------------------------------------------
 COMMODITIES = {
-    "BRENT":   "BZ=F",
-    "WTI":     "CL=F",
-    "NATGAS":  "NG=F",
-    "COAL":    "MTF=F",
-    "IRON":    "TIO=F",
-    "COPPER":  "HG=F",
-    "ALUMIN":  "ALI=F",
-    "GOLD":    "GC=F",
-    "SILVER":  "SI=F",
-    "WHEAT":   "ZW=F",
-    "CORN":    "ZC=F",
-    "SOYBEAN": "ZS=F",
+    "BRENT": "BZ=F", "WTI": "CL=F", "NATGAS": "NG=F", "COAL": "MTF=F",
+    "IRON": "TIO=F", "COPPER": "HG=F", "ALUMIN": "ALI=F", "GOLD": "GC=F",
+    "SILVER": "SI=F", "WHEAT": "ZW=F", "CORN": "ZC=F", "SOYBEAN": "ZS=F",
 }
 
-
-# -------------------------------------------------------------------
-# GLOBAL MARKET SERIES  ::  label -> Yahoo ticker (risk/regime proxies)
-# Used by signals + MRC as global risk-appetite reads.
-# -------------------------------------------------------------------
 MARKET_TICKERS = {
-    "DXY":     "DX-Y.NYB",   # US dollar index
-    "VIX":     "^VIX",       # equity vol
-    "MOVE":    "^MOVE",      # rate vol (may be spotty on Yahoo)
-    "US10Y":   "^TNX",       # US 10y yield (x10)
-    "SPX":     "^GSPC",      # S&P 500
-    "EMB":     "EMB",        # EM USD sovereign ETF (credit proxy)
-    "EMHY":    "EMHY",       # EM high-yield ETF (credit proxy)
-    "GOLD_ETF":"GLD",
+    "DXY": "DX-Y.NYB", "VIX": "^VIX", "MOVE": "^MOVE", "US10Y": "^TNX",
+    "SPX": "^GSPC", "EMB": "EMB", "EMHY": "EMHY", "GOLD_ETF": "GLD",
 }
 
-
-# -------------------------------------------------------------------
-# INGEST WINDOWS  ::  how much history to pull
-# -------------------------------------------------------------------
-HISTORY = {
-    "macro_years":  25,   # World Bank / DBnomics
-    "market_years": 15,   # Yahoo FX / commodities / market
-}
+HISTORY = {"macro_years": 25, "market_years": 15}
 
 
 # ===================================================================
-# NEWS LAYER  ::  feeds live here (control panel); logic lives in
-# news_ingest.py. All headlines land in the `news` table (core.py).
+# NEWS LAYER
 # ===================================================================
 
 # -------------------------------------------------------------------
 # RSS_FEEDS  ::  (source_id, name, tier, url)
-# tier A = official / wires | B = research / commentary | C = niche / blogs
-# Add a feed = add a line. news_ingest.py needs NO edits.
-# NOTE: feed URLs drift over time -- if one goes quiet, verify the URL
-# on the publisher's site and update it here. (Verified live Jul-2026.)
 # -------------------------------------------------------------------
 RSS_FEEDS = [
-    # ---- Tier A : central banks / official bodies / wires ----
+    # ---- Tier A ----
     ("fed",       "US Federal Reserve (press)",  "A", "https://www.federalreserve.gov/feeds/press_all.xml"),
     ("ecb",       "European Central Bank (press)","A", "https://www.ecb.europa.eu/rss/press.html"),
     ("boe",       "Bank of England (news)",       "A", "https://www.bankofengland.co.uk/rss/news"),
@@ -259,44 +198,77 @@ RSS_FEEDS = [
     ("ft_em",     "FT Emerging Markets",          "A", "https://www.ft.com/emerging-markets?format=rss"),
     ("ft_econ",   "FT Global Economy",            "A", "https://www.ft.com/global-economy?format=rss"),
     ("ft_mkts",   "FT Markets",                   "A", "https://www.ft.com/markets?format=rss"),
-
-    # ---- Tier B : research / think tanks / commentary ----
-    #   (add bank research + think-tank feeds here as you find them)
+    # ---- Tier B ----
     ("bruegel",   "Bruegel (think tank)",         "B", "https://www.bruegel.org/rss.xml"),
-
-    # ---- Tier C : niche / independent / substacks / blogs ----
-    #   Substacks: append '/feed' to the base URL -> instant RSS.
-    #   Example placeholders -- swap for the writers you actually follow:
+    ("cfr",       "Council on Foreign Relations",  "B", "https://www.cfr.org/rss.xml"),
+    ("guardian",  "The Guardian (business)",      "B", "https://www.theguardian.com/business/rss"),
+    # ---- Tier C ----
+    # Substacks: append '/feed' to the base URL.
     # ("noahpinion", "Noahpinion (Substack)",     "C", "https://www.noahpinion.blog/feed"),
-    # ("em_sherpa",  "EM Sherpa (Substack)",      "C", "https://emsherpa.substack.com/feed"),
 ]
 
 # -------------------------------------------------------------------
-# GDELT  ::  free global news firehose (per-country ArtList query).
-# No API key. Rolling ~3-month window. Rate-limited -> we sleep between calls.
-# Treated as a lower tier by default (unfiltered aggregation); the article
-# domain is preserved in the URL so you can promote trusted domains later.
+# DOMAIN_TIER  ::  domain -> tier.  Promotes GDELT firehose articles by
+# PUBLISHER quality (GDELT tags everything C; a Reuters story deserves A).
+# Applied at DISPLAY time in app.py -> fixes existing rows with no re-pull.
+# Add a domain = curate your quality list.
 # -------------------------------------------------------------------
-GDELT_ENABLED     = True
-GDELT_TIER        = "C"      # firehose = default low tier; refine later
-GDELT_TIMESPAN    = "3d"     # how far back per run (e.g. '24h', '3d', '1w')
-GDELT_MAXRECORDS  = 60       # max articles per country per run (<=250)
-GDELT_LANG        = "english"  # restrict to English coverage ("" = all)
-GDELT_EM_ONLY     = True     # True = only pull EM countries (saves volume)
-GDELT_SLEEP_SEC   = 1.2      # pause between country calls (avoid 429s)
+DOMAIN_TIER = {
+    # Tier A: wires / flagship financial press / officials
+    "reuters.com": "A", "ft.com": "A", "bloomberg.com": "A",
+    "wsj.com": "A", "economist.com": "A", "apnews.com": "A",
+    "nytimes.com": "A", "cnbc.com": "A", "imf.org": "A",
+    "worldbank.org": "A", "bis.org": "A", "ecb.europa.eu": "A",
+    "federalreserve.gov": "A", "bankofengland.co.uk": "A",
+    "bankofcanada.ca": "A", "boj.or.jp": "A",
+    # Tier B: solid outlets / research
+    "theguardian.com": "B", "bbc.com": "B", "bbc.co.uk": "B",
+    "aljazeera.com": "B", "scmp.com": "B", "nikkei.com": "B",
+    "cfr.org": "B", "bruegel.org": "B", "project-syndicate.org": "B",
+    "foreignpolicy.com": "B", "politico.com": "B", "cnn.com": "B",
+}
 
 # -------------------------------------------------------------------
-# NEWS_COUNTRY_ALIASES  ::  extra keyword -> iso3 hints for tagging
-# headlines that don't literally say the country name (currencies,
-# central banks, capitals, common shorthand). Keys are matched
-# case-insensitively as whole words against the headline.
+# FEED_ORIGIN_ISO  ::  source_id -> iso3 fallback (central-bank feeds).
+# -------------------------------------------------------------------
+FEED_ORIGIN_ISO = {
+    "fed": "USA", "ecb": "EMU", "boe": "GBR", "boj": "JPN", "boc": "CAN",
+}
+
+# -------------------------------------------------------------------
+# GDELT
+# -------------------------------------------------------------------
+GDELT_ENABLED     = True
+GDELT_TIER        = "C"
+GDELT_TIMESPAN    = "3d"
+GDELT_MAXRECORDS  = 60
+GDELT_LANG        = "english"
+GDELT_EM_ONLY     = True
+GDELT_SLEEP_SEC   = 2.0
+
+# -------------------------------------------------------------------
+# NEWS_COUNTRY_ALIASES  ::  keyword -> iso3.  Includes leaders / institutions /
+# currencies / capitals so headlines that never name the country still tag
+# (e.g. "Trump" -> USA, "Erdogan" -> TUR, "Lula" -> BRA). Extend freely.
 # -------------------------------------------------------------------
 NEWS_COUNTRY_ALIASES = {
-    # institutions / shorthand
+    # institutions
     "fed": "USA", "federal reserve": "USA", "fomc": "USA", "treasury": "USA",
-    "ecb": "EMU", "euro area": "EMU", "eurozone": "EMU",
+    "white house": "USA", "congress": "USA", "wall street": "USA",
+    "ecb": "EMU", "euro area": "EMU", "eurozone": "EMU", "brussels": "EMU",
     "boj": "JPN", "boe": "GBR", "pboc": "CHN", "rbi": "IND",
     "bank indonesia": "IDN", "bsp": "PHL", "mas": "SGP",
+    # leaders (add/adjust as needed)
+    "trump": "USA", "biden": "USA", "powell": "USA", "yellen": "USA",
+    "xi jinping": "CHN", "xi ": "CHN", "li qiang": "CHN",
+    "modi": "IND", "lula": "BRA", "milei": "ARG", "erdogan": "TUR",
+    "putin": "RUS", "kishida": "JPN", "ishiba": "JPN", "prabowo": "IDN",
+    "marcos": "PHL", "amlo": "MEX", "sheinbaum": "MEX", "ramaphosa": "ZAF",
+    "lagarde": "EMU", "sunak": "GBR", "starmer": "GBR",
+    # capitals
+    "washington": "USA", "beijing": "CHN", "tokyo": "JPN", "jakarta": "IDN",
+    "new delhi": "IND", "brasilia": "BRA", "ankara": "TUR", "moscow": "RUS",
+    "seoul": "KOR", "pretoria": "ZAF", "buenos aires": "ARG",
     # currencies
     "rupiah": "IDN", "ringgit": "MYS", "baht": "THA", "peso": "PHL",
     "dong": "VNM", "yuan": "CHN", "renminbi": "CHN", "won": "KOR",
@@ -306,24 +278,40 @@ NEWS_COUNTRY_ALIASES = {
 }
 
 # -------------------------------------------------------------------
-# NEWS_TOPICS  ::  headline keyword -> Kanban column. Derived at DISPLAY
-# time (news_ingest.topic_of), so no DB column / schema change needed.
-# First bucket whose keywords match wins; order matters.
+# NEWS_TOPICS  ::  topic key -> keyword list.  A headline can now match
+# MULTIPLE topics (news_ingest.topics_of returns all matches). Expanded to
+# shrink the "General" pile. Add a bucket = add a key here.
 # -------------------------------------------------------------------
 NEWS_TOPICS = {
-    "monetary_policy": ["rate", "rates", "central bank", "policy", "hike",
-                         "cut", "hawkish", "dovish", "inflation target",
-                         "monetary", "tightening", "easing"],
-    "inflation":       ["inflation", "cpi", "prices", "deflation",
-                         "disinflation", "ppi", "cost of living"],
+    "monetary_policy": ["rate", "rates", "central bank", "policy rate", "hike",
+                         "rate cut", "hawkish", "dovish", "monetary",
+                         "tightening", "easing", "fomc", "boj", "ecb"],
+    "inflation":       ["inflation", "cpi", "ppi", "prices", "deflation",
+                         "disinflation", "cost of living"],
     "growth":          ["gdp", "growth", "recession", "pmi", "output",
-                         "manufacturing", "unemployment", "jobs", "trade"],
-    "politics":        ["election", "government", "president", "coup",
-                         "protest", "sanction", "war", "conflict", "minister",
-                         "parliament", "reform", "fiscal"],
-    "markets":         ["bond", "yield", "equity", "stocks", "currency",
-                         "fx", "default", "credit", "spread", "capital",
-                         "reserves", "devaluation"],
+                         "manufacturing", "industrial", "jobs", "unemployment",
+                         "payroll", "labour", "labor"],
+    "trade":           ["trade", "tariff", "export", "import", "customs",
+                         "supply chain", "wto", "sanction"],
+    "commodities":     ["oil", "brent", "crude", "opec", "gas", "lng",
+                         "copper", "gold", "iron ore", "wheat", "soybean",
+                         "commodity", "commodities"],
+    "credit_debt":     ["debt", "bond", "yield", "default", "credit",
+                         "spread", "downgrade", "rating", "sovereign",
+                         "restructuring", "imf loan", "bailout"],
+    "fx_markets":      ["currency", "fx", "exchange rate", "devaluation",
+                         "peg", "reserves", "capital flows", "depreciat"],
+    "equities":        ["stocks", "equity", "equities", "shares", "ipo",
+                         "index", "market rally", "selloff"],
+    "geopolitics":     ["election", "government", "president", "coup",
+                         "protest", "war", "conflict", "minister", "parliament",
+                         "coalition", "referendum", "sanctions", "military"],
+    "energy":          ["energy", "power", "electricity", "renewable",
+                         "nuclear", "coal", "pipeline"],
+    "tech":            ["chip", "semiconductor", "ai ", "tech", "data center",
+                         "technology", "startup"],
+    "china":           ["china", "beijing", "yuan", "pboc", "xi jinping",
+                         "property", "evergrande"],
 }
 
 
@@ -331,31 +319,31 @@ NEWS_TOPICS = {
 # LOOK & FEEL  ::  SMU Emerging Markets palette + Segoe UI
 # -------------------------------------------------------------------
 PALETTE = {
-    "canvas":   "#F2F2F2",   # light grey background
-    "gold":     "#8C7604",   # highlight / alert accent
-    "navy1":    "#071359",   # darkest navy (headers / anchors)
-    "navy2":    "#04198C",   # mid navy
-    "navy3":    "#051DA6",   # bright navy (links / active)
-    "ink":      "#1a1a1a",   # body text
-    "muted":    "#6b7280",   # secondary text
-    "card":     "#FFFFFF",   # island card background
-    "border":   "#d9dbe3",   # card borders
-    "good":     "#0f7a3d",   # positive
-    "bad":      "#b02a2a",   # negative
+    "canvas":   "#E9EBEF",
+    "gold":     "#948A54",
+    "navy1":    "#1F497D",
+    "navy2":    "#2E5C96",
+    "navy3":    "#6593C4",
+    "brown":    "#74592D",
+    "grey":     "#939DAA",
+    "ink":      "#1D2733",
+    "muted":    "#6B7480",
+    "card":     "#FFFFFF",
+    "border":   "#DFE2E8",
+    "good":     "#2E7D46",
+    "bad":      "#B4453A",
 }
 
 FONTS = {
     "ui":   "'Segoe UI', 'Segoe UI Web', system-ui, sans-serif",
-    "mono": "'Consolas', 'Segoe UI Mono', monospace",  # numeric tables only
+    "mono": "'Consolas', 'Segoe UI Mono', monospace",
 }
 
 
 # -------------------------------------------------------------------
-# Small helpers so other files don't re-derive these constantly.
-# (Kept here because they're pure config-derived lookups.)
+# Helpers
 # -------------------------------------------------------------------
 def iso3_to_iso2(iso3: str) -> str:
-    """Rough ISO3->ISO2 map for DBnomics/IMF masks. Extend as needed."""
     _MAP = {
         "IDN": "ID", "MYS": "MY", "THA": "TH", "PHL": "PH", "VNM": "VN",
         "SGP": "SG", "CHN": "CN", "KOR": "KR", "TWN": "TW", "HKG": "HK",

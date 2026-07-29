@@ -1,39 +1,24 @@
 """
 EMDASH :: news_ingest.py
 
-THE NEWS COLLECTOR. Fills the `news` table that already exists in core.py.
-Two source types, one shared writer:
+THE NEWS COLLECTOR. Fills the `news` table in core.py.
+  [1] RSS / Atom feeds   -> config.RSS_FEEDS
+  [2] GDELT DOC 2.0 API  -> config.GDELT_*
 
-  [1] RSS / Atom feeds   -> config.RSS_FEEDS      (curated Tier A / B / C)
-  [2] GDELT DOC 2.0 API  -> config.GDELT_*         (global firehose, per-country)
+Row: (ts, source_id, tier, iso3_tags, headline, url, tone).
+De-dup: primary key (ts, url) + INSERT OR IGNORE -> reruns add only NEW rows.
 
-Every headline becomes one row:
-    (ts, source_id, tier, iso3_tags, headline, url, tone)
+COUNTRY TAGGING: keyword-match headline vs country names + NEWS_COUNTRY_ALIASES
+(now incl. leaders/capitals, e.g. "Trump"->USA). Fallback to FEED_ORIGIN_ISO.
 
-De-dup is automatic: the `news` primary key is (ts, url) and we write with
-INSERT OR IGNORE (core.write_rows, replace=False). So re-running only adds
-genuinely NEW headlines -- same "skip what we already have" idea as ingest.py.
-
-COUNTRY TAGGING
-  RSS headlines have no country field, so we keyword-match the headline text
-  against country names + config.NEWS_COUNTRY_ALIASES (currencies, "Fed", etc).
-  GDELT rows are already country-scoped (we query one country at a time).
-
-TOPIC BUCKETING (for the Kanban columns)
-  Derived at DISPLAY time via topic_of() so we do NOT touch the DB schema.
-  app.py imports topic_of(headline) to sort cards into columns
-  (Monetary Policy / Inflation / Growth / Politics / Markets).
-
-TONE
-  RSS feeds carry no tone            -> stored as None.
-  GDELT ArtList carries no per-article tone either -> None for now.
-  (Documented upgrade path: enrich tone via GDELT GKG or a local lexicon.)
+TOPICS: topics_of() returns a LIST (a headline can be multi-tagged). topic_of()
+kept for backward-compat (returns the first). Both read config.NEWS_TOPICS.
 
 USAGE
-  python news_ingest.py                 # all enabled sources (RSS + GDELT)
-  python news_ingest.py --only rss      # just the curated feeds
-  python news_ingest.py --only gdelt    # just the firehose
-  python news_ingest.py --limit 10      # cap feeds/countries (quick test)
+  python news_ingest.py                 # RSS + GDELT
+  python news_ingest.py --only rss
+  python news_ingest.py --only gdelt
+  python news_ingest.py --limit 10
 """
 from __future__ import annotations
 
@@ -51,11 +36,9 @@ GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
 # ===================================================================
-# COUNTRY TAGGING  -- turn "Indonesia cuts rates" into iso3_tags="IDN"
+# TAGGING
 # ===================================================================
 def _country_keywords() -> dict[str, str]:
-    """Build a {lowercase keyword -> iso3} map from country names + aliases.
-    Longer keys first so 'south korea' beats 'korea'-style partials."""
     kw: dict[str, str] = {}
     for iso3, name, *_ in config.COUNTRIES:
         kw[name.lower()] = iso3
@@ -65,45 +48,43 @@ def _country_keywords() -> dict[str, str]:
 
 
 def _tag_countries(text: str, kwmap: dict[str, str]) -> str:
-    """Return a comma-joined list of iso3s mentioned in `text` (no dups)."""
     if not text:
         return ""
     low = f" {text.lower()} "
     found: list[str] = []
-    # match longer keywords first (e.g. 'south africa' before 'africa')
     for keyword in sorted(kwmap, key=len, reverse=True):
         if keyword in low and kwmap[keyword] not in found:
             found.append(kwmap[keyword])
     return ",".join(found)
 
 
-def topic_of(text: str) -> str:
-    """Map a headline to a Kanban column key (config.NEWS_TOPICS).
-    Used at DISPLAY time by app.py. First matching bucket wins."""
+def topics_of(text: str) -> list[str]:
+    """All topics whose keywords appear in the headline (multi-tag)."""
     if not text:
-        return "general"
+        return ["general"]
     low = text.lower()
-    for topic, words in config.NEWS_TOPICS.items():
-        if any(w in low for w in words):
-            return topic
-    return "general"
+    hits = [t for t, words in config.NEWS_TOPICS.items()
+            if any(w in low for w in words)]
+    return hits or ["general"]
+
+
+def topic_of(text: str) -> str:
+    """First matching topic (backward-compatible single tag)."""
+    return topics_of(text)[0]
 
 
 # ===================================================================
-# [1] RSS / ATOM FEEDS
+# [1] RSS
 # ===================================================================
 def _parse_entry_time(entry) -> str:
-    """Best-effort ISO timestamp from a feedparser entry."""
     for attr in ("published_parsed", "updated_parsed"):
         t = getattr(entry, attr, None)
         if t:
             return dt.datetime(*t[:6]).isoformat(timespec="seconds")
-    # no date on the entry -> stamp it now (still de-dupes on url)
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
 def fetch_rss(limit: int | None = None, replace: bool = False) -> int:
-    """Pull every feed in config.RSS_FEEDS into the news table."""
     try:
         import feedparser
     except ImportError:
@@ -111,6 +92,7 @@ def fetch_rss(limit: int | None = None, replace: bool = False) -> int:
         return 0
 
     kwmap = _country_keywords()
+    origin = getattr(config, "FEED_ORIGIN_ISO", {})
     feeds = config.RSS_FEEDS[:limit] if limit else config.RSS_FEEDS
     print(f"[news] RSS -- {len(feeds)} feeds")
     total = 0
@@ -133,7 +115,8 @@ def fetch_rss(limit: int | None = None, replace: bool = False) -> int:
                 continue
             ts = _parse_entry_time(e)
             iso3_tags = _tag_countries(headline, kwmap)
-            # (ts, source_id, tier, iso3_tags, headline, url, tone)
+            if not iso3_tags and source_id in origin:
+                iso3_tags = origin[source_id]
             rows.append((ts, source_id, tier, iso3_tags, headline, link, None))
 
         n = core.write_rows("news", rows, replace=replace)
@@ -146,22 +129,16 @@ def fetch_rss(limit: int | None = None, replace: bool = False) -> int:
 
 
 # ===================================================================
-# [2] GDELT DOC 2.0  (free global firehose, per-country ArtList)
+# [2] GDELT
 # ===================================================================
 def _gdelt_query(query: str, maxrecords: int, timespan: str) -> list[dict]:
-    """Hit the GDELT DOC 2.0 ArtList endpoint. Returns list of article dicts."""
     params = {
-        "query": query,
-        "mode": "ArtList",
-        "format": "json",
-        "maxrecords": str(maxrecords),
-        "timespan": timespan,
-        "sort": "datedesc",
+        "query": query, "mode": "ArtList", "format": "json",
+        "maxrecords": str(maxrecords), "timespan": timespan, "sort": "datedesc",
     }
     url = f"{GDELT_URL}?{urllib.parse.urlencode(params)}"
     try:
         r = requests.get(url, timeout=45)
-        # GDELT returns 429 when rate-limited, or HTML on a bad query
         if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
             return []
         return r.json().get("articles", []) or []
@@ -171,7 +148,6 @@ def _gdelt_query(query: str, maxrecords: int, timespan: str) -> list[dict]:
 
 
 def _gdelt_seendate_to_iso(seendate: str) -> str:
-    """'20260726T120000Z' -> '2026-07-26T12:00:00'. Falls back to now()."""
     try:
         return dt.datetime.strptime(seendate, "%Y%m%dT%H%M%SZ").isoformat(
             timespec="seconds")
@@ -180,8 +156,6 @@ def _gdelt_seendate_to_iso(seendate: str) -> str:
 
 
 def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
-    """One ArtList query per country -> news table. Country is known, so
-    iso3_tags is set directly (no keyword matching needed)."""
     if not config.GDELT_ENABLED:
         print("[news] GDELT disabled in config")
         return 0
@@ -196,7 +170,6 @@ def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
     total = 0
 
     for iso3, name, *_ in countries:
-        # query the country name; optionally restrict language
         q = f'"{name}"'
         if config.GDELT_LANG:
             q += f" sourcelang:{config.GDELT_LANG}"
@@ -209,13 +182,12 @@ def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
             if not headline or not link:
                 continue
             ts = _gdelt_seendate_to_iso(a.get("seendate", ""))
-            # (ts, source_id, tier, iso3_tags, headline, url, tone)
             rows.append((ts, "gdelt", config.GDELT_TIER, iso3, headline, link, None))
 
         n = core.write_rows("news", rows, replace=replace)
         total += n
         print(f"    [GDELT] {iso3}: {n} new  ({len(articles)} seen)")
-        time.sleep(config.GDELT_SLEEP_SEC)   # be polite -> avoid 429s
+        time.sleep(config.GDELT_SLEEP_SEC)
 
     core.log_ingest("gdelt", total)
     print(f"[news] GDELT new rows: {total}")
@@ -227,25 +199,20 @@ def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
 # ===================================================================
 def run_news(only: str | None = None, limit: int | None = None,
              refresh: bool = False) -> None:
-    core.init_db()                      # ensure schema + reference tables exist
-    replace = refresh                   # --refresh overwrites; default keeps
-
+    core.init_db()
+    replace = refresh
     if only in (None, "rss") and config.FEATURE_FLAGS.get("ingest_rss", True):
         fetch_rss(limit=limit, replace=replace)
     if only in (None, "gdelt"):
         fetch_gdelt(limit=limit, replace=replace)
-
     print("[news] table counts:", core.table_counts())
     print("[news] done.")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", choices=["rss", "gdelt"],
-                    help="run just one source type")
-    ap.add_argument("--limit", type=int,
-                    help="cap number of feeds / countries (quick test)")
-    ap.add_argument("--refresh", action="store_true",
-                    help="overwrite existing rows instead of skipping")
+    ap.add_argument("--only", choices=["rss", "gdelt"], help="run one source type")
+    ap.add_argument("--limit", type=int, help="cap feeds / countries")
+    ap.add_argument("--refresh", action="store_true", help="overwrite existing rows")
     args = ap.parse_args()
     run_news(only=args.only, limit=args.limit, refresh=args.refresh)

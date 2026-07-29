@@ -1,0 +1,22 @@
+{
+  "tab": "country",
+  "columns_by": "Country",
+  "f_days": 7,
+  "f_desk": [
+    "LATAM"
+  ],
+  "f_tier": [],
+  "f_topic": [],
+  "country": "BGD",
+  "indicator": "CPI_INDEX_M",
+  "transform": "Level",
+  "show_grid": [
+    "on"
+  ],
+  "es_sig_country": "USA",
+  "es_sig_ind": "POLICY_RATE",
+  "es_transform": "Level",
+  "es_rule": "cross_above",
+  "es_threshold": 5,
+  "es_tgt_country": "USA"
+}
