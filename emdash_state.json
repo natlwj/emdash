@@ -1,5 +1,5 @@
 {
-  "tab": "country",
+  "tab": "mrc",
   "columns_by": "Country",
   "f_days": 100000,
   "f_desk": [],
@@ -13,7 +13,10 @@
   "country": "USA",
   "cmp_countries": [
     "AUS",
-    "EMU"
+    "EMU",
+    "IND",
+    "IDN",
+    "CHL"
   ],
   "indicator": "CPI_INDEX_M",
   "transform": "Level",
@@ -27,16 +30,16 @@
     "on"
   ],
   "ctry_range": "Max",
-  "es_mode": "one",
+  "es_mode": "cross",
   "es_sig_country": "USA",
   "es_sig_ind": "POLICY_RATE",
   "es_transform": "Level",
   "es_rule": "cross_above",
-  "es_threshold": 5,
-  "es_target": "cmdty:NATGAS",
+  "es_threshold": 8,
+  "es_target": "glob:BTC",
   "es_xtarget": "POLICY_RATE",
   "es_horizon": 80,
-  "es_xsort": "edge_desc",
-  "mrc_days": 20,
+  "es_xsort": "abs",
+  "mrc_days": 40,
   "mrc_range": "Max"
 }

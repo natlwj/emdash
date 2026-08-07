@@ -129,7 +129,7 @@ import urllib.parse
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State
+from dash import Dash, dcc, html, Input, Output, State, ALL, MATCH
 
 import config
 import core
@@ -672,7 +672,7 @@ def _fig(height=320, ytitle="", yunit="", xtitle="",
         template="plotly_white", hovermode="x unified",
         font=dict(family=F["ui"], color=P["ink"], size=11),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=MARGIN_L, r=22, t=18, b=46), height=height,
+        margin=dict(l=MARGIN_L, r=22, t=42, b=46), height=height,
         colorway=[P["navy2"], P["gold"], P["navy3"], P["good"], P["bad"]],
         xaxis=xaxis, yaxis=yaxis, showlegend=False,
     )
@@ -680,11 +680,13 @@ def _fig(height=320, ytitle="", yunit="", xtitle="",
 
 
 def _legend(fig, on=True):
-    """Centred horizontal legend -- the global convention."""
+    """Centred horizontal legend, sitting fully ABOVE the plot -- the global
+    convention. yanchor='bottom' pins the legend's bottom edge just over the
+    plot so it never dips into the data, however many series there are."""
     if on:
         fig.update_layout(showlegend=True,
-                          legend=dict(orientation="h", y=1.12,
-                                      x=0.5, xanchor="center"))
+                          legend=dict(orientation="h", yanchor="bottom",
+                                      y=1.02, x=0.5, xanchor="center"))
     return fig
 
 
@@ -789,11 +791,14 @@ def chart_card(graph_id, *, title_id=None, sub_id=None, source_id=None,
     head = [html.Div(head_left, className="emd-chart-titlewrap")]
     if prov_id:
         head.append(html.Div(id=prov_id))
-    if range_id:
-        head.append(_range_pills(range_id, range_value))
 
-    kids = [html.Div(head, className="emd-chart-head"),
-            _graph(graph_id)]
+    kids = []
+    if range_id:
+        kids.append(html.Div(_range_pills(range_id, range_value),
+                             className="emd-range-row"))
+    kids.append(html.Div(head, className="emd-chart-head"))
+    kids.append(_graph(graph_id))
+
     if source_id:
         kids.append(html.Div(id=source_id, className="emd-chart-source"))
     return html.Div(kids, className="emd-card")
@@ -918,10 +923,10 @@ def mini_fig(isos, indicator, transform="Level", normalise=False):
     isos = _as_iso_list(isos)
     unit = unit_for(indicator, transform)
     multi = len(isos) > 1
-    fig = _fig(height=215,
+    fig = _fig(height=270,
                ytitle=_ytitle_for(indicator, transform, unit, normalise),
                yunit=("" if normalise else unit), nticks_x=6, nticks_y=5)
-    fig.update_layout(margin=dict(l=78, r=14, t=14, b=34))
+    fig.update_layout(margin=dict(l=78, r=14, t=72, b=34)) 
 
     series = []
     for iso3 in isos:
@@ -966,6 +971,11 @@ def _favicon(domain):
     return html.Img(src=FAVICON_URL.format(domain=domain),
                     className="emd-favicon", title=domain)
 
+
+def _slim_row(r):
+    """Minimal JSON-safe row for lazy-loaded cards (no Timestamps)."""
+    return {k: r.get(k) for k in ("tier", "source_id", "domain", "_tsfmt",
+            "_desks", "iso3_tags", "headline", "url", "dupes", "sources")}
 
 def _news_card(row):
     tier = row["tier"] or "?"
@@ -1077,14 +1087,16 @@ def news_board(columns_by, desks, tiers, topics, days, search=""):
         if total > CARDS_PER_COL:
             rest = items[CARDS_PER_COL:CARDS_PER_COL + EXPAND_EXTRA]
             hidden = total - CARDS_PER_COL - len(rest)
-            body = [_news_card(r) for r in rest]
-            if hidden > 0:
-                body.append(html.Div(
-                    f"...{hidden} more not shown - narrow the filters or search.",
-                    className="emd-col-hint"))
-            cards.append(html.Details([
-                html.Summary(f"+ {total - CARDS_PER_COL} more - click to show"),
-                html.Div(body, className="emd-col-rest"),
+            cards.append(html.Div([
+                html.Button(f"+ {total - CARDS_PER_COL} more - click to load",
+                            id={"type": "news-more-btn", "col": col},
+                            n_clicks=0, className="emd-btn emd-btn--ghost"),
+                dcc.Store(id={"type": "news-more-store", "col": col},
+                          data=[_slim_row(r) for r in rest]),
+                html.Div(id={"type": "news-more-wrap", "col": col}),
+                (html.Div(f"...{hidden} more beyond that - narrow the filter.",
+                          className="emd-col-hint") if hidden > 0
+                 else html.Div()),
             ], className="emd-col-more"))
         board.append(html.Div([
             html.Div([html.Span(_column_title(col, columns_by)),
@@ -1731,7 +1743,7 @@ def mrc_compute(min_days=None, force=False):
 def mrc_ribbon_fig(reg):
     fig = _fig(height=210, ytitle="")
     fig.update_layout(barmode="stack",
-                      margin=dict(l=MARGIN_L, r=22, t=18, b=46))
+                      margin=dict(l=MARGIN_L, r=22, t=42, b=46))
     _legend(fig, True)
     fig.update_yaxes(showticklabels=False, showgrid=False, range=[0, 1])
 
@@ -1920,13 +1932,14 @@ def _plain_card(title, graph_id, source_id, sub=None, range_id=None,
     if sub:
         head_left.append(html.Div(sub, className="emd-chart-sub"))
     head = [html.Div(head_left, className="emd-chart-titlewrap")]
+    kids = []
     if range_id:
-        head.append(_range_pills(range_id, range_value))
-    return html.Div([
-        html.Div(head, className="emd-chart-head"),
-        _graph(graph_id),
-        html.Div(id=source_id, className="emd-chart-source"),
-    ], className="emd-card")
+        kids.append(html.Div(_range_pills(range_id, range_value),
+                             className="emd-range-row"))
+    kids.append(html.Div(head, className="emd-chart-head"))
+    kids.append(_graph(graph_id))
+    kids.append(html.Div(id=source_id, className="emd-chart-source"))
+    return html.Div(kids, className="emd-card")
 
 
 def _callback_title_card(title_id, graph_id, source_id):
@@ -2249,6 +2262,15 @@ def _news(columns_by, days, desks, tiers, topics, search, n_clicks):
         load_news(force=True)
     return news_board(columns_by, desks, tiers, topics, days, search)
 
+@app.callback(
+    Output({"type": "news-more-wrap", "col": MATCH}, "children"),
+    Input({"type": "news-more-btn", "col": MATCH}, "n_clicks"),
+    State({"type": "news-more-store", "col": MATCH}, "data"),
+    prevent_initial_call=True)
+def _news_more(n_clicks, data):
+    if not n_clicks or not data:
+        return None
+    return [_news_card(r) for r in data]
 
 @app.callback(Output("macro-graph", "figure"), Output("fx-graph", "figure"),
               Output("stat-tiles", "children"),
