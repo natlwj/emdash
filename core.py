@@ -1,5 +1,5 @@
 """
-EMDASH :: core.py
+EMDASH :: core.py   (v2)
 ===================================================================
 THE SPINE. One SQLite file, one place to read/write it.
 
@@ -8,8 +8,14 @@ Public read API:
     get_global(), get_latest(), get_panel(),
     countries_df(), tags_df(), table_counts()
 
-NEW in this version -- "do I already have this?" checks so ingest
-can skip data that's already stored (fast, gap-filling re-runs):
+NEW in v2 (for the Database Dash tab + dropdown grey-out):
+    coverage()               -> one row per (scope,key,field): n_rows,
+                                first_date, last_date, source. Powers the
+                                Data Availability tab.
+    has_coverage(iso3,field) -> bool; does this country+field have ANY data?
+                                Feeds the app's dropdown grey-out.
+
+"Do I already have this?" checks so ingest can skip filled data:
     has_macro(iso3, indicator)
     has_market(iso3, series)
     has_commodity(name)
@@ -119,6 +125,9 @@ def init_db(db_path=None) -> None:
     conn = get_conn(db_path)
     cur = conn.cursor()
     cur.executescript(_SCHEMA_SQL)
+    # COUNTRIES tuples are 5-wide (iso3,name,desk,dm_em,fx_ticker); the DB
+    # countries table matches. Parallel dicts (EQUITY_INDICES, etc.) are NOT
+    # stored here -- ingest reads them directly from config.
     cur.executemany(
         "INSERT OR REPLACE INTO countries (iso3,name,desk,dm_em,fx_ticker) "
         "VALUES (?,?,?,?,?)", config.COUNTRIES)
@@ -325,6 +334,73 @@ def table_counts(db_path=None) -> dict:
     return out
 
 
+# -------------------------------------------------------------------
+# COVERAGE  ::  what data exists, from when to when, from what source.
+# Powers the Database Dash tab and the dropdown grey-out.        [v2: NEW]
+# -------------------------------------------------------------------
+def coverage(db_path=None) -> pd.DataFrame:
+    """Data-availability map: one row per (scope, key, field).
+
+    Columns: scope, key, field, n, first, last, source.
+      scope='macro'     key=iso3  field=indicator
+      scope='market'    key=iso3  field=series  (FX / EQUITY / Y10 / FX_FRED..)
+      scope='commodity' key='-'   field=commodity
+      scope='global'    key='-'   field=series
+    Read-only, cheap GROUP BY. Cache it in the app (it changes only on ingest).
+    """
+    conn = get_conn(db_path)
+    queries = [
+        ("SELECT iso3 AS key,'macro' AS scope,indicator AS field,"
+         "COUNT(*) n,MIN(date) first,MAX(date) last,MAX(source_id) source "
+         "FROM macro_data GROUP BY iso3,indicator"),
+        ("SELECT iso3 AS key,'market' AS scope,series AS field,"
+         "COUNT(*) n,MIN(date) first,MAX(date) last,MAX(source_id) source "
+         "FROM market_data GROUP BY iso3,series"),
+        ("SELECT '-' AS key,'commodity' AS scope,commodity AS field,"
+         "COUNT(*) n,MIN(date) first,MAX(date) last,MAX(source_id) source "
+         "FROM commodity_data GROUP BY commodity"),
+        ("SELECT '-' AS key,'global' AS scope,series AS field,"
+         "COUNT(*) n,MIN(date) first,MAX(date) last,MAX(source_id) source "
+         "FROM global_market GROUP BY series"),
+    ]
+    frames = []
+    for sql in queries:
+        try:
+            frames.append(pd.read_sql(sql, conn))
+        except Exception:
+            pass
+    conn.close()
+    cols = ["key", "scope", "field", "n", "first", "last", "source"]
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(frames, ignore_index=True)
+    return out[cols]
+
+
+def has_coverage(iso3: str, field: str, db_path=None) -> bool:
+    """Does (iso3, field) have ANY rows, in macro OR market? Feeds the app's
+    dropdown grey-out so empty options can be disabled per country."""
+    return (has_macro(iso3, field, db_path)
+            or has_market(iso3, field, db_path))
+
+
+def ingest_log_df(db_path=None) -> pd.DataFrame:
+    """Freshness table: per source, when it last ran and how many rows.
+    Shown in the Database Dash tab so you can see what is stale."""
+    conn = get_conn(db_path)
+    try:
+        df = pd.read_sql("SELECT source_id, last_run, rows FROM ingest_log "
+                         "ORDER BY last_run DESC", conn)
+    except Exception:
+        df = pd.DataFrame(columns=["source_id", "last_run", "rows"])
+    conn.close()
+    return df
+
+
 if __name__ == "__main__":
     init_db()
     print("[core] table counts:", table_counts())
+    cov = coverage()
+    print(f"[core] coverage rows: {len(cov)}")
+    if not cov.empty:
+        print(cov.head(12).to_string())

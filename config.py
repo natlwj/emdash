@@ -131,6 +131,9 @@ FEATURE_FLAGS = {
     "ingest_rss":         True,
     "ingest_predmarkets": False,
     "ingest_trends":      False,
+
+    "ingest_stooq_eq":    True,     # v3.1: equity indices Yahoo can't reach
+    "ingest_predmarkets": True,     # v3.1: Polymarket (was a stub) -> now real
     # ---- dashboard tabs ----
     "module_database":    True,     # v3 NEW: Data Availability tab (FIRST tab)
     "module_news":        True,
@@ -503,7 +506,7 @@ EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
     "SWE": "^OMX",    "JPN": "^N225",     "HKG": "^HSI",   "SGP": "^STI",
     "KOR": "^KS11",   "TWN": "^TWII",     "CHN": "000001.SS",
     "IND": "^NSEI",   "IDN": "^JKSE",     "MYS": "^KLSE",  "THA": "^SET.BK",
-    "PHL": "^PSEI.PS","VNM": "^VNINDEX",  "PAK": "^KSE",
+    "PHL": "PSEI.PS","VNM": "^VNINDEX.VN",  "PAK": "^KSE",
     "BRA": "^BVSP",   "MEX": "^MXX",      "CHL": "^IPSA",  "COL": "^COLCAP",
     "ARG": "^MERV",   "PER": "^SPBLPGPT",
     "ZAF": "^JN0U.JO","SAU": "^TASI.SR",  "ISR": "^TA125.TA",
@@ -511,6 +514,33 @@ EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
     "POL": "^WIG",    "HUN": "^BUX.BD",   "CZE": "^PX",    "TUR": "^XU100",
     "GRC": "^ATG",    "ROU": "^BETI",
 }
+
+
+# ===================================================================
+# EQUITY_STOOQ  ::  iso3 -> Stooq symbol.  For indices NOT on Yahoo.   [v3.1]
+# Pulled from Stooq's CSV endpoint (stooq.com/q/d/l/?s=SYM&i=d) by
+# ingest.fetch_stooq_equities -> market_data, series="EQUITY", source_id="stooq".
+# ** ALL # VERIFY: run `python ingest.py --only stooq_eq` and drop 0-row rows. **
+# ===================================================================
+EQUITY_STOOQ = {
+    "POL": "^wig20", "CZE": "^px",  "HUN": "^bux",  "ROU": "^bet",
+    "GRC": "^atg",   "QAT": "^qsi", "CHL": "^ipsa", "PER": "^spblg",
+    "TUR": "^xu100", "COL": "^colcap", "PAK": "^kse",
+}
+
+EQUITY_STOOQ = {  # VERIFY every symbol
+    "POL": "^wig20",   # Poland WIG20
+    "CZE": "^px",      # Czech PX (Prague)
+    "HUN": "^bux",     # Hungary BUX
+    "ROU": "^bet",     # Romania BET
+    "GRC": "^atg",     # Greece Athens General (ASE)
+    "QAT": "^qsi",     # Qatar QE General            # VERIFY (may be absent)
+    "AUT": "^atx",     # Austria ATX  (bonus -- if you add AUT later)
+    "PRT": "^psi20",   # Portugal PSI-20 (bonus)
+    "ESP": "^ibex",    # Spain IBEX (bonus)
+    "ITA": "^ftmib",   # Italy FTSE MIB (bonus)
+}
+
 
 # ===================================================================
 # SOVEREIGN_YIELDS  ::  iso3 -> {tenor: source_spec}             [v3: NEW]
@@ -585,6 +615,17 @@ FRED_SERIES = {
 # USD SWAP SPREADS -- KIV (Bloomberg-only, no clean free daily source).
 # mrc.py already knows key "SWAP_SPREAD_10Y" and starts using it when rows
 # appear -- a future Bloomberg collector writes it, no code change here.
+
+# -------------------------------------------------------------------
+# PREDICTION MARKETS (Polymarket)  ::  free public Gamma API.       [v3.1]
+# fetch_predmarkets pulls the most active/liquid markets -> predmarket_data
+# (date, market_id, question, prob, venue). Snapshot per run (today's prob),
+# so running weekly builds a probability time-series you can chart later.
+# -------------------------------------------------------------------
+POLYMARKET_API   = "https://gamma-api.polymarket.com/markets"
+PREDMARKET_LIMIT = 120      # how many active markets to snapshot per run
+PREDMARKET_MIN_VOL = 10000  # skip illiquid markets below this USD volume
+
 
 # ===================================================================
 # MACRO REGIME CLASSIFIER (MRC)   -- read by mrc.py

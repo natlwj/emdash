@@ -135,6 +135,9 @@ import config
 import core
 import signals as sig
 
+import core
+import database_tab
+
 # --- tagging lives in news_ingest.py (single source of truth, ingest + display)
 try:
     from news_ingest import topics_of, topics_of_many, tag_countries_many
@@ -1918,6 +1921,8 @@ app = Dash(__name__, title="EMDASH")
 app.config.suppress_callback_exceptions = True
 server = app.server
 
+database_tab.register(app)
+
 
 def _filter(label, comp):
     return html.Div([html.Span(label, className="emd-ctrl-label"), comp],
@@ -2209,6 +2214,8 @@ def serve_layout():
     _STATE = load_state()
 
     tabs = []
+    if FLAGS.get("module_database", True):
+        tabs.append(database_tab.tab())
     if FLAGS.get("module_news", True):
         tabs.append(_tab_news())
     if FLAGS.get("module_country", True):

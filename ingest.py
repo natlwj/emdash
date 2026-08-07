@@ -1,64 +1,46 @@
 """
-EMDASH :: ingest.py   (v3)
+EMDASH :: ingest.py   (v3.1)
 ===================================================================
 ALL FETCHERS. Each source: fetch -> clean -> core.write_rows().
 Driven by config.FEATURE_FLAGS. run_all() loops enabled sources.
 
-Kept from v1/v2 (unchanged behaviour):
-    - skip_existing (default ON): if a country/series already has data, DON'T
-      re-download it. Fast re-runs; failed pulls get filled without a full
-      re-pull.
-    - auto-retry on timeout (2 tries, 45s).
-    - --refresh: force full re-pull (overwrite).
-    - ingest_log freshness stamp per source.
-    - FRED credit-spread collector (v2), split globals fetcher (v2), wired
-      dead flags (v2), DEFAULT_FLAGS safety net (v2), loud GDELT pointer (v2).
+HOW THIS FILE RELATES TO core.py (plain words):
+    ingest.py DOWNLOADS numbers from the web, then HANDS them to
+    core.write_rows(), and core is what SAVES them into emdash.sqlite.
+    ingest never touches the database directly -- it always goes through core.
+    So "python ingest.py" quietly calls core code many times per run.
 
-------------------------------------------------------------------
-WHAT CHANGED IN v3   (matches config.py v3)
-------------------------------------------------------------------
-1. TIME WINDOW IS A DATE, NOT A COUNT.
-   Market collectors now pass yfinance start=config.MARKET_START ("1950-01-01"
-   by default) instead of period="15y". The SOURCE still caps the real earliest
-   date; this just asks for everything. World Bank uses config.MACRO_START_YEAR
-   as the ?date= lower bound. HISTORY year-counts remain a fallback.
-   ** skip_existing means lowering MARKET_START does NOT extend an already-
-      populated series on a normal run. Use --refresh (or --only X --refresh)
-      to overwrite with the longer history. A smart extend-backward check is
-      planned for the core.py phase. **
+Kept from v1/v2/v3 (unchanged behaviour):
+    - skip_existing (default ON): skip data already stored (fast gap-fill runs).
+    - auto-retry on timeout (2 tries, 45s); --refresh forces full re-pull.
+    - date-window pulls (config.MARKET_START / MACRO_START_YEAR).
+    - collectors: worldbank, dbnomics, yahoo_fx, equities, yields, fred_fx,
+      commodities, globals, fred, seed.
 
-2. NEW COLLECTOR: fetch_equities()  (config.EQUITY_INDICES)
-   Per-country stock index -> market_data, series="EQUITY", source_id="yahoo_eq".
-   A near-copy of fetch_yahoo_fx: iso3 in dict = pull; not in dict = no rows.
-
-3. NEW COLLECTOR: fetch_yields()  (config.SOVEREIGN_YIELDS)
-   Sovereign bond yields per country per tenor -> market_data, series
-   "Y2"/"Y5"/"Y10"/"Y30". Each tenor is a ("fred"|"yahoo", id) spec, so a
-   country can mix sources. US full curve already lives in globals (MARKET_
-   TICKERS); this is the per-country layer.
-
-4. NEW COLLECTOR: fetch_fred_fx()  (config.FX_FRED)
-   Deep-history FX backfill from FRED's DEX* series (reach the 1970s-90s vs
-   Yahoo's ~2003). Written to a SEPARATE series "FX_FRED" (NOT "FX") on
-   purpose: some DEX* pairs are USD-per-LCY (inverted) vs Yahoo's LCY-per-USD,
-   so mixing them into one series would corrupt direction. The core.py/app.py
-   phase decides how to present/join FX vs FX_FRED; ingest just stores both
-   cleanly and non-destructively.
-
-5. THREE NEW FLAGS WIRED: ingest_yahoo_eq, ingest_yields, ingest_fred_fx.
-   --only accepts: equities, yields, fred_fx.
+WHAT CHANGED IN v3.1
+    1. NEW COLLECTOR fetch_stooq_equities()  (config.EQUITY_STOOQ)
+       Equity indices Yahoo can't reach (Poland/Czech/Hungary/Romania/Greece/
+       Qatar...). Stooq has no JSON API but a CSV-over-HTTP endpoint
+       (stooq.com/q/d/l/?s=SYM&i=d) -- from code that's identical to an API:
+       requests.get -> parse CSV -> core.write_rows. Writes the SAME series
+       ("EQUITY") as fetch_equities, source_id="stooq", so a country uses
+       Yahoo OR Stooq, never both.
+    2. REAL fetch_predmarkets()  (Polymarket free Gamma API)
+       Replaces the v2 stub. Snapshots the most active markets -> predmarket_data
+       (date, market_id, question, prob, venue). Each run is a daily snapshot,
+       so weekly runs build a probability time-series.
+    3. --only accepts: stooq_eq, predmarkets. Both wired into _DISPATCH.
 
 Usage:
     python ingest.py                      # fill gaps, skip filled
     python ingest.py --list               # what would run, and why
-    python ingest.py --only worldbank
-    python ingest.py --only equities      # per-country stock indices
+    python ingest.py --only equities      # Yahoo per-country stock indices
+    python ingest.py --only stooq_eq      # Stooq indices (Yahoo gaps)
+    python ingest.py --only predmarkets   # Polymarket snapshot
     python ingest.py --only yields        # sovereign bond yields
     python ingest.py --only fred_fx       # deep-history FX backfill
     python ingest.py --only globals       # DXY/VIX/MOVE/BTC + US curve
-    python ingest.py --only fred          # credit spreads
-    python ingest.py --only commodities --refresh   # settles COAL
-    python ingest.py --skip-market
+    python ingest.py --only commodities --refresh
     python ingest.py --refresh            # force full re-pull (overwrite)
 ===================================================================
 """
@@ -68,6 +50,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import io
+import json as _json
 import time
 
 import pandas as pd
@@ -78,13 +61,13 @@ import core
 
 WB_BASE = "https://api.worldbank.org/v2"
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
+STOOQ_CSV = "https://stooq.com/q/d/l/?s={sym}&i=d"
 TIMEOUT = 45
 RETRIES = 2
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 EMDASH-ingest/3.0")
+       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 EMDASH-ingest/3.1")
 
-# Market window (v3): a start DATE, not a year count.
 MARKET_START = getattr(config, "MARKET_START", "1950-01-01")
 MACRO_START_YEAR = int(getattr(config, "MACRO_START_YEAR", 1960))
 
@@ -96,7 +79,7 @@ def _get_json(url: str):
     last = None
     for attempt in range(RETRIES):
         try:
-            r = requests.get(url, timeout=TIMEOUT)
+            r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": _UA})
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -118,15 +101,8 @@ def _get_text(url: str) -> str:
     raise last
 
 
-# ===================================================================
-# shared Yahoo helper  (v3: start-date aware)
-# ===================================================================
 def _yahoo(ticker, start=None, years=None) -> pd.DataFrame:
-    """One Yahoo series -> DataFrame[date, value] (Close).
-
-    v3: prefers start=MARKET_START (pull everything the source has) over a
-    fixed year-count. Falls back to period="{years}y" if no start is given.
-    """
+    """One Yahoo series -> DataFrame[date, value] (Close). start-date aware."""
     try:
         import yfinance as yf
     except ImportError:
@@ -260,7 +236,7 @@ def fetch_yahoo_fx(skip_existing=True, replace=False) -> int:
     total = 0
     for iso3, name, _, _, fx in config.COUNTRIES:
         if not fx:
-            continue          # USA / dollarised / EUR users (app substitutes)
+            continue
         if skip_existing and core.has_market(iso3, "FX"):
             continue
         df = _yahoo(fx, start=MARKET_START)
@@ -277,14 +253,10 @@ def fetch_yahoo_fx(skip_existing=True, replace=False) -> int:
 
 
 # ===================================================================
-# [3b] YAHOO  (equity indices)  -- NEW in v3
+# [3b] YAHOO  (equity indices)
 # ===================================================================
 def fetch_equities(skip_existing=True, replace=False) -> int:
-    """Per-country stock index -> market_data, series='EQUITY'.
-
-    config.EQUITY_INDICES holds only countries with a free Yahoo index; the
-    rest are simply absent (no blank rows). Same shape as fetch_yahoo_fx.
-    """
+    """Per-country stock index -> market_data, series='EQUITY'."""
     idx = getattr(config, "EQUITY_INDICES", {})
     print(f"[ingest] Yahoo equity indices -- {len(idx)} markets, daily since "
           f"{MARKET_START} (skip_existing={skip_existing})")
@@ -306,17 +278,79 @@ def fetch_equities(skip_existing=True, replace=False) -> int:
 
 
 # ===================================================================
-# [3c] SOVEREIGN YIELDS  -- NEW in v3
+# [3c] STOOQ  (equity indices Yahoo lacks)  -- NEW in v3.1
+# ===================================================================
+def _stooq_one(symbol: str) -> pd.DataFrame:
+    """One Stooq series via its CSV endpoint. Cols: Date,Open,High,Low,Close,Vol.
+
+    Stooq has no JSON API, but this URL returns a CSV over HTTP -- from code
+    that's the same as an API: requests.get -> pandas parses the reply.
+    """
+    try:
+        text = _get_text(STOOQ_CSV.format(sym=symbol))
+    except Exception as e:
+        print(f"    [STOOQ] {symbol} FAILED: {e}")
+        return pd.DataFrame(columns=["date", "value"])
+    if not text or text.lstrip().lower().startswith("<"):
+        # Stooq serves HTML (not CSV) for a bad symbol or when rate-limited.
+        print(f"    [STOOQ] {symbol}: no CSV (bad symbol / rate-limited)")
+        return pd.DataFrame(columns=["date", "value"])
+    try:
+        df = pd.read_csv(io.StringIO(text))
+    except Exception as e:
+        print(f"    [STOOQ] {symbol} unparseable: {e}")
+        return pd.DataFrame(columns=["date", "value"])
+    if df.empty or "Close" not in df.columns or "Date" not in df.columns:
+        return pd.DataFrame(columns=["date", "value"])
+    out = df[["Date", "Close"]].copy()
+    out.columns = ["date", "value"]
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna()
+    if out.empty:
+        return pd.DataFrame(columns=["date", "value"])
+    out["date"] = out["date"].dt.strftime("%Y-%m-%d")
+    return out.reset_index(drop=True)
+
+
+def fetch_stooq_equities(skip_existing=True, replace=False) -> int:
+    """Equity indices not on Yahoo -> market_data, series='EQUITY', src='stooq'.
+
+    Same target series as fetch_equities, so a country uses Yahoo OR Stooq, not
+    both. Only iso3 keys that are real countries are pulled.
+    """
+    idx = getattr(config, "EQUITY_STOOQ", {})
+    valid = {i for i, *_ in config.COUNTRIES}
+    print(f"[ingest] Stooq equity indices -- {len(idx)} symbols "
+          f"(skip_existing={skip_existing})")
+    total = 0
+    for iso3, sym in idx.items():
+        if iso3 not in valid:
+            continue
+        if skip_existing and core.has_market(iso3, "EQUITY"):
+            continue
+        df = _stooq_one(sym)
+        if df.empty:
+            print(f"    [STOOQ] {iso3} {sym}: no data")
+            continue
+        rows = [(r.date, iso3, "EQUITY", r.value, "stooq")
+                for r in df.itertuples(index=False)]
+        total += core.write_rows("market_data", rows, replace=replace)
+        print(f"    [STOOQ] {iso3} {sym}: {len(rows)}")
+        time.sleep(0.3)
+    core.log_ingest("stooq_eq", total)
+    print(f"[ingest] Stooq equities new rows: {total}")
+    return total
+
+
+# ===================================================================
+# [3d] SOVEREIGN YIELDS
 # ===================================================================
 _TENOR_SERIES = {"2Y": "Y2", "5Y": "Y5", "10Y": "Y10", "30Y": "Y30"}
 
 
 def fetch_yields(skip_existing=True, replace=False) -> int:
-    """Per-country government bond yields -> market_data, series Y2/Y5/Y10/Y30.
-
-    config.SOVEREIGN_YIELDS[iso3] = {tenor: (src, id)} where src is 'fred' or
-    'yahoo'. Each tenor is fetched independently, so partial curves are fine.
-    """
+    """Per-country government bond yields -> market_data, series Y2/Y5/Y10/Y30."""
     spec = getattr(config, "SOVEREIGN_YIELDS", {})
     n_series = sum(len(v) for v in spec.values())
     print(f"[ingest] Sovereign yields -- {n_series} series across "
@@ -331,13 +365,16 @@ def fetch_yields(skip_existing=True, replace=False) -> int:
                 df = _fred_one(ident)
             elif src == "yahoo":
                 df = _yahoo(ident, start=MARKET_START)
+            elif src == "stooq":
+                df = _stooq_one(ident)
             else:
                 print(f"    [YLD] {iso3} {tenor}: unknown source '{src}'")
                 continue
             if df.empty:
                 print(f"    [YLD] {iso3} {tenor} ({src}:{ident}): no data")
                 continue
-            source_id = "fred" if src == "fred" else "yahoo_yld"
+            source_id = {"fred": "fred", "yahoo": "yahoo_yld",
+                         "stooq": "stooq"}.get(src, src)
             rows = [(r.date, iso3, series, r.value, source_id)
                     for r in df.itertuples(index=False)]
             total += core.write_rows("market_data", rows, replace=replace)
@@ -352,12 +389,7 @@ def fetch_yields(skip_existing=True, replace=False) -> int:
 # [4] YAHOO  (commodities)
 # ===================================================================
 def fetch_commodities(skip_existing=True, replace=False) -> int:
-    """Commodity futures -> commodity_data.
-
-    NOTE ON COAL: skip_existing checks 'has ANY rows', not 'is current'. COAL
-    has rows, so a normal run always skips it. Prove staleness with:
-        python ingest.py --only commodities --refresh
-    """
+    """Commodity futures -> commodity_data. COAL staleness: prove with --refresh."""
     print(f"[ingest] Yahoo commodities -- daily since {MARKET_START} "
           f"(skip_existing={skip_existing})")
     total = 0
@@ -381,11 +413,7 @@ def fetch_commodities(skip_existing=True, replace=False) -> int:
 # [5] YAHOO  (global market gauges)
 # ===================================================================
 def fetch_globals(skip_existing=True, replace=False) -> int:
-    """DXY / VIX / MOVE / SPX / EMB / BTC / US curve ... -> global_market.
-
-    Run this after adding anything to config.MARKET_TICKERS (the MRC's gauges
-    plus the US Treasury curve live here).
-    """
+    """DXY / VIX / MOVE / SPX / EMB / BTC / US curve -> global_market."""
     print(f"[ingest] Yahoo global gauges -- daily since {MARKET_START} "
           f"(skip_existing={skip_existing})")
     total = 0
@@ -409,12 +437,7 @@ def fetch_globals(skip_existing=True, replace=False) -> int:
 # [6] FRED  (credit spreads)
 # ===================================================================
 def _fred_one(series_id: str) -> pd.DataFrame:
-    """One FRED series via the public CSV endpoint (no API key).
-
-    Header changed over the years ("DATE,<ID>" vs "observation_date,<ID>"), so
-    take the FIRST column as date and SECOND as value by position. Missing
-    observations are published as "." and dropped (never interpolated).
-    """
+    """One FRED series via the public CSV endpoint (no API key)."""
     url = FRED_CSV.format(sid=series_id)
     try:
         text = _get_text(url)
@@ -431,7 +454,7 @@ def _fred_one(series_id: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "value"])
     out = df.iloc[:, :2].copy()
     out.columns = ["date", "value"]
-    out["value"] = pd.to_numeric(out["value"], errors="coerce")   # "." -> NaN
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out = out.dropna()
     if out.empty:
@@ -443,10 +466,9 @@ def _fred_one(series_id: str) -> pd.DataFrame:
 def fetch_fred(skip_existing=True, replace=False) -> int:
     """ICE BofA option-adjusted spreads -> global_market.
 
-    mrc.py already registers IG_OAS / BBB_OAS / HY_OAS as optional gauges, so
-    they start voting automatically once these rows exist -- no code change.
-    FIREWALL: a ConnectionReset here is the office blocking fred.stlouisfed.org,
-    not a config error (see config DATA GAPS).
+    FIREWALL: a ConnectionReset / getaddrinfo failure here means the office
+    network blocked fred.stlouisfed.org outright -- not a config error. Credit
+    spreads then only come via api.stlouisfed.org (free key) or Bloomberg.
     """
     series = getattr(config, "FRED_SERIES", {})
     if not series:
@@ -473,15 +495,14 @@ def fetch_fred(skip_existing=True, replace=False) -> int:
 
 
 # ===================================================================
-# [6b] FRED FX  (deep-history FX backfill)  -- NEW in v3
+# [6b] FRED FX  (deep-history FX backfill)
 # ===================================================================
 def fetch_fred_fx(skip_existing=True, replace=False) -> int:
     """Deep-history daily FX from FRED DEX* -> market_data, series='FX_FRED'.
 
-    Written to FX_FRED, NOT FX, on purpose: some DEX* pairs are USD-per-LCY
-    (inverted) vs Yahoo's LCY-per-USD, so mixing them into one series would
-    corrupt direction. Presenting/joining FX vs FX_FRED is a core/app decision;
-    ingest just stores both cleanly. See config.FX_FRED (# VERIFY direction).
+    Stored as FX_FRED (NOT FX) because some DEX* pairs are USD-per-LCY vs
+    Yahoo's LCY-per-USD; mixing would corrupt direction. Same firewall caveat
+    as fetch_fred applies (FRED host).
     """
     fxf = getattr(config, "FX_FRED", {})
     print(f"[ingest] FRED FX (deep history) -- {len(fxf)} series "
@@ -505,7 +526,66 @@ def fetch_fred_fx(skip_existing=True, replace=False) -> int:
 
 
 # ===================================================================
-# [7] SEED LOADER
+# [7] PREDICTION MARKETS (Polymarket)  -- REAL in v3.1
+# ===================================================================
+def fetch_predmarkets(skip_existing=True, replace=False) -> int:
+    """Snapshot the most active Polymarket markets -> predmarket_data.
+
+    Free public Gamma API, no key. Stores today's probability per market
+    (PK is (date, market_id)), so weekly runs accumulate a probability
+    time-series. skip_existing is intentionally ignored -- each run is a new
+    daily snapshot; replace=True lets a same-day re-run overwrite.
+    """
+    url = getattr(config, "POLYMARKET_API",
+                  "https://gamma-api.polymarket.com/markets")
+    limit = int(getattr(config, "PREDMARKET_LIMIT", 120))
+    min_vol = float(getattr(config, "PREDMARKET_MIN_VOL", 0))
+    today = dt.date.today().isoformat()
+    print(f"[ingest] Polymarket -- top {limit} active markets "
+          f"(min volume {min_vol:g})")
+    try:
+        js = _get_json(f"{url}?closed=false&active=true&limit={limit}"
+                       f"&order=volume&ascending=false")
+    except Exception as e:
+        print(f"    [PM] FAILED: {e}")
+        return 0
+    if isinstance(js, dict):
+        js = js.get("data", [])
+    if not isinstance(js, list):
+        print("    [PM] unexpected response shape")
+        return 0
+    rows = []
+    for m in js:
+        try:
+            vol = float(m.get("volume") or m.get("volumeNum") or 0)
+        except Exception:
+            vol = 0.0
+        if vol < min_vol:
+            continue
+        mid = str(m.get("id") or m.get("conditionId") or "")
+        q = (m.get("question") or m.get("title") or "")[:300]
+        prob = None
+        op = m.get("outcomePrices")
+        if isinstance(op, str):
+            try:
+                prob = float(_json.loads(op)[0])
+            except Exception:
+                prob = None
+        elif isinstance(op, list) and op:
+            try:
+                prob = float(op[0])
+            except Exception:
+                prob = None
+        if mid and prob is not None:
+            rows.append((today, mid, q, prob, "polymarket"))
+    n = core.write_rows("predmarket_data", rows, replace=replace)
+    core.log_ingest("predmarkets", n)
+    print(f"[ingest] Polymarket rows: {n} (from {len(js)} markets returned)")
+    return n
+
+
+# ===================================================================
+# [8] SEED LOADER
 # ===================================================================
 def load_seed(replace=False) -> int:
     print("[ingest] seed loader -- CSVs in seed/")
@@ -531,17 +611,12 @@ def load_seed(replace=False) -> int:
 
 
 # ===================================================================
-# [8] STUBS / POINTERS
+# [9] STUBS / POINTERS
 # ===================================================================
 def fetch_gdelt(**kw):
     """NOT the real GDELT collector -- that is news_ingest.fetch_gdelt()."""
     print("[ingest] GDELT is handled by news_ingest.py, not ingest.py")
     print("         run:  python news_ingest.py --only gdelt")
-    return 0
-
-
-def fetch_predmarkets(**kw):
-    print("[ingest] predmarkets stub (not built)")
     return 0
 
 
@@ -551,26 +626,26 @@ def fetch_trends(**kw):
 
 
 # ===================================================================
-# [9] ORCHESTRATION
+# [10] ORCHESTRATION
 # ===================================================================
-# key -> (feature flag, function, default-if-flag-missing)
 _DISPATCH = {
-    "worldbank":   ("ingest_worldbank",   fetch_worldbank,   True),
-    "dbnomics":    ("ingest_dbnomics",    fetch_dbnomics,    True),
-    "yahoo_fx":    ("ingest_yahoo_fx",    fetch_yahoo_fx,    True),
-    "equities":    ("ingest_yahoo_eq",    fetch_equities,    True),
-    "yields":      ("ingest_yields",      fetch_yields,      True),
-    "fred_fx":     ("ingest_fred_fx",     fetch_fred_fx,     False),
-    "commodities": ("ingest_commodities", fetch_commodities, True),
-    "globals":     ("ingest_globals",     fetch_globals,     True),
-    "fred":        ("ingest_fred",        fetch_fred,        False),
-    "gdelt":       ("ingest_gdelt",       fetch_gdelt,       False),
-    "predmarkets": ("ingest_predmarkets", fetch_predmarkets, False),
-    "trends":      ("ingest_trends",      fetch_trends,      False),
-    "seed":        (None,                 load_seed,         True),
+    "worldbank":   ("ingest_worldbank",   fetch_worldbank,      True),
+    "dbnomics":    ("ingest_dbnomics",    fetch_dbnomics,       True),
+    "yahoo_fx":    ("ingest_yahoo_fx",    fetch_yahoo_fx,       True),
+    "equities":    ("ingest_yahoo_eq",    fetch_equities,       True),
+    "stooq_eq":    ("ingest_stooq_eq",    fetch_stooq_equities, True),
+    "yields":      ("ingest_yields",      fetch_yields,         True),
+    "fred_fx":     ("ingest_fred_fx",     fetch_fred_fx,        False),
+    "commodities": ("ingest_commodities", fetch_commodities,    True),
+    "globals":     ("ingest_globals",     fetch_globals,        True),
+    "fred":        ("ingest_fred",        fetch_fred,           False),
+    "predmarkets": ("ingest_predmarkets", fetch_predmarkets,    True),
+    "gdelt":       ("ingest_gdelt",       fetch_gdelt,          False),
+    "trends":      ("ingest_trends",      fetch_trends,         False),
+    "seed":        (None,                 load_seed,            True),
 }
 
-MARKET_KEYS = ("yahoo_fx", "equities", "yields", "fred_fx",
+MARKET_KEYS = ("yahoo_fx", "equities", "stooq_eq", "yields", "fred_fx",
                "commodities", "globals")
 
 
@@ -591,7 +666,7 @@ def list_sources() -> None:
         note = ""
         if key == "gdelt":
             note = "-> news_ingest.py"
-        elif key in ("predmarkets", "trends"):
+        elif key == "trends":
             note = "not built"
         elif key == "fred" and on:
             note = f"{len(getattr(config, 'FRED_SERIES', {}))} series"
@@ -602,10 +677,14 @@ def list_sources() -> None:
         elif key == "commodities":
             note = f"{len(config.COMMODITIES)} tickers"
         elif key == "equities":
-            note = f"{len(getattr(config, 'EQUITY_INDICES', {}))} markets"
+            note = f"{len(getattr(config, 'EQUITY_INDICES', {}))} markets (Yahoo)"
+        elif key == "stooq_eq":
+            note = f"{len(getattr(config, 'EQUITY_STOOQ', {}))} markets (Stooq)"
         elif key == "yields":
             n = sum(len(v) for v in getattr(config, 'SOVEREIGN_YIELDS', {}).values())
             note = f"{n} tenor-series"
+        elif key == "predmarkets":
+            note = f"top {getattr(config, 'PREDMARKET_LIMIT', 120)} Polymarket"
         elif key == "yahoo_fx":
             note = f"{sum(1 for *_, fx in [(i, fx) for i, n, d, dm, fx in config.COUNTRIES] if fx)} currencies"
         elif key == "worldbank":
@@ -634,7 +713,6 @@ def run_all(only=None, skip_market=False, refresh=False) -> None:
             continue
         if skip_market and key in MARKET_KEYS:
             continue
-        # An explicit --only overrides a disabled flag (you asked by name).
         if not _enabled(flag, default) and not only:
             continue
         if key == "seed":
