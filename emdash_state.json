@@ -1,16 +1,32 @@
 {
-  "tab": "eventstudy",
-  "columns_by": "Desk",
-  "f_days": 7,
+  "tab": "country",
+  "columns_by": "Country",
+  "f_days": 100000,
   "f_desk": [],
-  "f_tier": [],
+  "f_tier": [
+    "A",
+    "B",
+    "C"
+  ],
   "f_topic": [],
-  "country": "BRA",
+  "f_search": "",
+  "country": "USA",
+  "cmp_countries": [
+    "AUS",
+    "EMU"
+  ],
   "indicator": "CPI_INDEX_M",
   "transform": "Level",
+  "normalise": [
+    "on"
+  ],
   "show_grid": [
     "on"
   ],
+  "grid_compare": [
+    "on"
+  ],
+  "ctry_range": "Max",
   "es_mode": "one",
   "es_sig_country": "USA",
   "es_sig_ind": "POLICY_RATE",
@@ -19,6 +35,8 @@
   "es_threshold": 5,
   "es_target": "cmdty:NATGAS",
   "es_xtarget": "POLICY_RATE",
-  "es_horizon": 20,
-  "es_xsort": "edge_desc"
+  "es_horizon": 80,
+  "es_xsort": "edge_desc",
+  "mrc_days": 20,
+  "mrc_range": "Max"
 }
