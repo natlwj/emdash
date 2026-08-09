@@ -133,6 +133,8 @@ from dash import Dash, dcc, html, Input, Output, State, ALL, MATCH
 
 import config
 import core
+import database_tab
+import runner
 import signals as sig
 
 import core
@@ -1920,6 +1922,8 @@ app = Dash(__name__, title="EMDASH")
 # that are not in the layout. This tells Dash that is intentional.
 app.config.suppress_callback_exceptions = True
 server = app.server
+database_tab.register(app)
+runner.register(app)
 
 database_tab.register(app)
 
@@ -1998,6 +2002,7 @@ def _tab_news():
                     style={"width": "210px"})),
                 html.Button("Refresh news", id="refresh-news", n_clicks=0,
                             className="emd-btn"),
+                runner.buttons_bar(["update-news"]),
             ], className="emd-controls"),
             dcc.Loading(html.Div(id="news-board"), type="default",
                         color=P["navy2"]),
@@ -2237,6 +2242,7 @@ def serve_layout():
 
     return html.Div([
         dcc.Store(id="_persist_sink"),
+        runner.status_store(),
         html.Div([
             html.Div("EMDASH", className="emd-logo"),
             html.Div(className="emd-title-sep"),

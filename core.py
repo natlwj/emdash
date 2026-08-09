@@ -334,6 +334,43 @@ def table_counts(db_path=None) -> dict:
     return out
 
 
+
+def news_coverage(db_path=None) -> dict:
+    """News stats for the SQLite Store tab: totals, tier/source breakdown,
+    date span, tagged vs untagged. Read-only."""
+    conn = get_conn(db_path)
+    try:
+        df = pd.read_sql("SELECT source_id, tier, iso3_tags, ts FROM news", conn)
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    if df.empty:
+        return {"total": 0, "by_tier": {}, "by_source": pd.DataFrame(),
+                "span": ("-", "-"), "tagged": 0, "untagged": 0}
+    by_tier = df["tier"].value_counts().to_dict()
+    by_source = (df.groupby("source_id")
+                   .agg(n=("ts", "size"), first=("ts", "min"), last=("ts", "max"))
+                   .reset_index().sort_values("n", ascending=False))
+    tagged = int((df["iso3_tags"].fillna("").str.len() > 0).sum())
+    return {"total": len(df), "by_tier": by_tier, "by_source": by_source,
+            "span": (str(df["ts"].min())[:10], str(df["ts"].max())[:10]),
+            "tagged": tagged, "untagged": len(df) - tagged}
+
+
+def prune_news(days: int, db_path=None) -> int:
+    """Delete news older than `days` days. Returns rows deleted. Keeps the DB
+    from growing forever once weekly pulls are scheduled. Call from
+    news_ingest, the weekly .bat, or a button."""
+    import datetime as _dt
+    cutoff = (_dt.datetime.now() - _dt.timedelta(days=int(days))).isoformat()
+    conn = get_conn(db_path)
+    cur = conn.execute("DELETE FROM news WHERE ts < ?", (cutoff,))
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
+
+
 # -------------------------------------------------------------------
 # COVERAGE  ::  what data exists, from when to when, from what source.
 # Powers the Database Dash tab and the dropdown grey-out.        [v2: NEW]

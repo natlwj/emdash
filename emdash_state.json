@@ -20,9 +20,7 @@
   ],
   "indicator": "CPI_INDEX_M",
   "transform": "Level",
-  "normalise": [
-    "on"
-  ],
+  "normalise": [],
   "show_grid": [
     "on"
   ],
