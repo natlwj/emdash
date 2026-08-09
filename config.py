@@ -1,5 +1,5 @@
 """
-EMDASH :: config.py   (v3.2)
+EMDASH :: config.py   (v3.3)
 
 THE CONTROL PANEL. This is the only file you edit to change WHAT EMDASH covers
 or how it looks. No logic lives here -- pure settings.
@@ -30,74 +30,65 @@ from here.
 DESK CODES: SEA . EAS . CSA . LATAM . MEA . EME . G10
 
 ==============================================================================
+WHAT CHANGED IN v3.3   (news COVERAGE + TAGGING pass)
+==============================================================================
+GOAL: almost every country gets media coverage, and far fewer "(no desk)" /
+"General" rows.
+
+1. RSS_FEEDS expanded with PAN-REGIONAL wires (one feed -> a whole region):
+     bne IntelliNews (100+ EM countries), allAfrica (all Africa), MercoPress
+     (all LatAm), Deutsche Welle + France 24 (global, strong MENA/Africa),
+     Channel NewsAsia (SE Asia), Africanews. PLUS single-country locals for
+     gaps: Dawn (PAK), Daily Star (BGD), Korea Herald, Taipei Times, VnExpress
+     (VNM), Bangkok Post (THA), Arab News (SAU), Gulf News (ARE), Times of
+     Israel, Kyiv Independent (UKR), Premium Times (NGA), Nation (KEN), Daily
+     Maverick (ZAF), Rio Times (BRA), Notes from Poland. GDELT still does the
+     per-country long tail; these give real outlets on top.
+
+2. NEWS_COUNTRY_ALIASES greatly expanded: capitals, demonyms, leaders and key
+     institutions for the smaller / WATCH-tier countries that previously had
+     only their bare country name. This is what shrinks "(no desk)".
+
+3. NEWS ACRONYMS are now CASE-SENSITIVE (see news_ingest.ACRONYM_ALIASES, which
+     this file feeds). "US" -> USA, "UK" -> GBR, "EU" -> EMU, "UAE" -> ARE, but
+     the lowercase words "us"/"uk"/"eu" and substrings like "SUS"/"bus" do NOT
+     match. This required a matcher change in news_ingest.py (v3): the lowercase
+     alias table CANNOT do this, because it lowercases the headline first.
+
+4. NEWS_TOPICS tuned + new "disaster" topic (wildfire/flood/quake/typhoon...),
+     more geopolitics keywords (ceasefire/strike/troops/sanction/tariff/nuclear
+     /missile/drone/coup/summit/treaty/nato...), so fewer rows fall to General.
+
+5. TAGS expanded (more oil/metals/ag exporters, tourism, remittance economies).
+
+** EVERY new/changed feed URL is # VERIFY **. Run FROM YOUR PC after the
+news_ingest.py browser-UA patch (feedparser's default UA gets 403s from
+Cloudflare-fronted sites):
+    python -c "import feedparser,config; ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'; [print(f'{s:14} HTTP {getattr(feedparser.parse(u,agent=ua),chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115),chr(63))!s:>4} n={len(feedparser.parse(u,agent=ua).entries):>3} {n}') for s,n,t,u in config.RSS_FEEDS]"
+Keep OK (n>0), drop DEAD. Timeout/ConnectionReset = office firewall (retest
+from home); HTTP 404 = wrong URL; HTTP 403 = still bot-blocked.
+
+==============================================================================
 WHAT CHANGED IN v3.2   (news-sources pass)
 ==============================================================================
-* RSS_FEEDS greatly expanded (~24 -> ~43): added World Bank, Economist, BBC,
-  CNBC, IMF Blog, PIIE, CFR, Project Syndicate, CEPR VoxEU, a set of LOCAL EM
-  outlets (Economic Times / LiveMint / Caixin / Jakarta Post / Hurriyet /
-  Moneyweb / Buenos Aires Times), and Reddit (r/economics, r/emergingmarkets,
-  r/geopolitics). Dropped banxico (Banco de Mexico has NO press RSS -- stats
-  only; Mexico now comes via GDELT + local press). X/Twitter deliberately NOT
-  added -- it killed public RSS in 2023.
-* DOMAIN_TIER + FEED_ORIGIN_ISO extended to match the new feeds.
-* ** EVERY new/changed feed URL is # VERIFY **. Run FROM YOUR PC after applying
-  the news_ingest.py browser-UA patch (feedparser's default UA gets 403s from
-  Cloudflare-fronted sites like Bruegel/Reddit):
-      python -c "import feedparser,config; ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'; [print(f'{s:12} HTTP {getattr(feedparser.parse(u,agent=ua),chr(34)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115)+chr(34),chr(63))!s:>4} n={len(feedparser.parse(u,agent=ua).entries):>3} {n}') for s,n,t,u in config.RSS_FEEDS]"
-  Keep OK (n>0), drop DEAD. A timeout/ConnectionReset = office firewall, retest
-  from home; HTTP 404 = wrong URL; HTTP 403 = still bot-blocked.
+* RSS_FEEDS grew ~24 -> ~43 (World Bank, Economist, BBC, CNBC, IMF Blog, PIIE,
+  CFR, Project Syndicate, CEPR VoxEU, local EM outlets, Reddit). Dropped banxico
+  (no press RSS). X/Twitter NOT added (killed public RSS in 2023).
 
 ==============================================================================
-WHAT CHANGED IN v3   (the "big data" pass -- meant to last a long time)
+WHAT CHANGED IN v3   (the "big data" pass)
 ==============================================================================
-1. COUNTRY UNIVERSE EXPANDED to the full free-data set (~90). Every country
-   from the SMU EM desk map is here. The tuple SHAPE is UNCHANGED (5 fields),
-   so nothing in app.py breaks -- new per-country data lives in PARALLEL dicts
-   keyed by iso3 (EQUITY_INDICES / SOVEREIGN_YIELDS / CLASSIFICATION), the same
-   pattern WB_INDICATORS already uses. Countries with no tradeable FX/market
-   carry fx_ticker="" and are WATCH tier: World Bank annual + news tagging
-   only, so they enrich coverage without inventing daily data.
+1. COUNTRY UNIVERSE ~90 (full free-data set). Tuple SHAPE unchanged (5 fields);
+   new per-country data in PARALLEL iso3 dicts. WATCH-tier = news + WB annual.
+2. TIME WINDOW is a DATE (MARKET_START / MACRO_START_YEAR), not a count.
+3. EQUITY_INDICES / SOVEREIGN_YIELDS parallel dicts (sparse, honest blanks).
+4. CLASSIFICATION iso3 -> {msci,ftse,sp,imf,tier} (agencies disagree = signal).
+5. FX_FRED deep-history FX. 6. More monthly DBN_SERIES. 7. More commodities /
+   globals. 8. Bloomberg-ready (same core.write_rows path).
 
-2. TIME WINDOW IS NOW A DATE, NOT A COUNT.
-   MARKET_START = "1950-01-01", MACRO_START_YEAR = 1950. "Pull as far back as
-   the source allows, but no earlier than this." The SOURCE is still the real
-   ceiling (Yahoo EM FX ~2003, US equities 1927, WB ~1960, IMF ~1950s) -- the
-   Data Availability tab shows where each series actually begins. HISTORY is
-   kept as a fallback for any collector still using a year-count.
-
-3. NEW PARALLEL COUNTRY DATA (each needs its collector in ingest.py v3):
-     EQUITY_INDICES    iso3 -> Yahoo index ticker      (^GSPC, ^STI, ...)
-     SOVEREIGN_YIELDS  iso3 -> {tenor: ticker/FRED id} (2Y/5Y/10Y/30Y)
-   Sparse by nature: free daily yields exist for ~20 countries, indices ~40.
-   Missing == blank == shown honestly in the availability tab, never faked.
-
-4. CLASSIFICATION -- who calls this country what.
-   iso3 -> {msci, ftse, sp, imf, tier}. The agencies DISAGREE (Korea EM on
-   MSCI, DM on FTSE; Greece EM->DM under FTSE 2026) and that disagreement is
-   itself signal. Replaces the single dm_em flag as the source of truth; the
-   tuple keeps a coarse dm_em for back-compat.
-
-5. FX_FRED -- deeper FX history than Yahoo.
-   Yahoo EM FX often starts ~2003. FRED's DEX* series reach the 1970s-90s for
-   the majors, free. iso3 -> FRED id; ingest uses it to backfill before Yahoo.
-
-6. MORE MONTHLY MACRO. New DBN_SERIES (industrial production, M2, trade) so the
-   warehouse is not annual-heavy. You asked to update monthly -- these are the
-   series that actually move monthly.
-
-7. MORE COMMODITIES + GLOBALS uncommented (metals/softs/livestock; US 2/5/30y,
-   VVIX, EEM, FXI).
-
-8. BLOOMBERG-READY. Nothing here assumes Bloomberg, but every collector in
-   ingest v3 writes via the same core.write_rows path, so a future
-   source_id="bloomberg" collector drops in with zero schema change. Build free
-   now, slot Bloomberg in later.
-
-** HALLUCINATION GUARD ** Every ticker / mask / classification added in v3 is
-tagged  # VERIFY  where not battle-tested. Confirm a batch with:
-    python ingest.py --list
-    python ingest.py --only globals   (etc.)  then  python status.py
-Anything that pulls 0 rows is a bad symbol, not missing data -- fix the symbol.
+** HALLUCINATION GUARD ** Every ticker/mask added is tagged # VERIFY where not
+battle-tested. Confirm with: python ingest.py --list ; --only <x> ; status.py.
+0 rows = bad symbol, not missing data.
 """
 from pathlib import Path
 
@@ -109,49 +100,37 @@ DB_PATH = ROOT / "emdash.sqlite"
 SEED_DIR = ROOT / "seed"
 
 # -------------------------------------------------------------------
-# TIME WINDOW  ::  how far back to pull.                     [v3: NEW]
-# A DATE, not a count, so "pull everything since 1950" is one edit and never
-# needs revisiting. The SOURCE caps the real earliest date; this is only the
-# floor we ask for. ingest.py passes MARKET_START as yfinance start=... and
-# MACRO_START_YEAR as the World Bank ?date= lower bound.
-#
-# NOTE on re-pulling deeper history later: a normal run SKIPS series that
-# already have rows (skip_existing), so simply lowering MARKET_START will NOT
-# extend existing series on its own -- run `python ingest.py --refresh` (or the
-# targeted --only ... --refresh) to overwrite with the longer history. A smart
-# "extend-backward only" check is planned for the core.py phase.
+# TIME WINDOW  ::  how far back to pull.
+# A DATE, not a count. The SOURCE caps the real earliest date; this is the floor
+# we ask for. Lowering MARKET_START does NOT extend existing series unless you
+# run `python ingest.py --refresh`.
 # -------------------------------------------------------------------
 MARKET_START = "1950-01-01"     # FX / equities / yields / commodities / globals
 MACRO_START_YEAR = 1950         # World Bank annual lower bound
-
-# Legacy fallback (year counts) -- still read by any path that hasn't moved to
-# the date window. Kept large so nothing silently truncates.
-HISTORY = {"macro_years": 75, "market_years": 75}
+HISTORY = {"macro_years": 75, "market_years": 75}   # legacy year-count fallback
 
 # -------------------------------------------------------------------
-# FEATURE FLAGS  ::  the single master on/off switches.
-#
-# ingest_*  -> read by ingest.py / news_ingest.py: should this collector run?
-# module_*  -> read by app.py: should this TAB be built at all?
+# FEATURE FLAGS  ::  master on/off switches.
+# ingest_* -> read by ingest.py / news_ingest.py.  module_* -> read by app.py.
 # -------------------------------------------------------------------
 FEATURE_FLAGS = {
     # ---- collectors ----
     "ingest_worldbank":   True,
     "ingest_dbnomics":    True,
     "ingest_yahoo_fx":    True,
-    "ingest_yahoo_eq":    True,     # v3 NEW: per-country equity indices
-    "ingest_yields":      True,     # v3 NEW: sovereign bond yields
-    "ingest_fred_fx":     True,     # v3 NEW: deep-history FX backfill via FRED
+    "ingest_yahoo_eq":    True,
+    "ingest_yields":      True,
+    "ingest_fred_fx":     True,
     "ingest_commodities": True,
-    "ingest_globals":     True,     # DXY/VIX/MOVE/... + BTC (MARKET_TICKERS)
-    "ingest_fred":        True,     # credit spreads (collector exists in v2)
+    "ingest_globals":     True,
+    "ingest_fred":        True,
     "ingest_gdelt":       True,
     "ingest_rss":         True,
-    "ingest_predmarkets": True,     # v3.1: Polymarket (was a stub) -> now real
+    "ingest_predmarkets": True,
     "ingest_trends":      False,
-    "ingest_stooq_eq":    True,     # v3.1: equity indices Yahoo can't reach
+    "ingest_stooq_eq":    True,
     # ---- dashboard tabs ----
-    "module_database":    True,     # v3 NEW: Data Availability tab (FIRST tab)
+    "module_database":    True,
     "module_news":        True,
     "module_country":     True,
     "module_event_study": True,
@@ -160,19 +139,9 @@ FEATURE_FLAGS = {
 
 # ===================================================================
 # COUNTRIES  ::  (iso3, name, desk, dm_em, fx_ticker)
-# fx_ticker = Yahoo Finance symbol for that currency vs USD ("IDR=X").
-#   ""  = no separate/tradeable FX to pull:
-#           - USA: the dollar IS the base (app substitutes DXY)
-#           - USD/EUR users (Ecuador, Panama, Greece, Baltics...): no own rate
-#           - illiquid/managed currencies with no clean Yahoo series
-#         WATCH-tier countries still get World Bank annual macro + news tags.
-# dm_em is a COARSE label (DM/EM/FM/WATCH). The authoritative per-agency call
-# lives in CLASSIFICATION below.
+# fx_ticker = Yahoo symbol vs USD ("IDR=X"); "" = no tradeable FX (USD/EUR user,
+# managed, or WATCH-only). dm_em is COARSE; per-agency call in CLASSIFICATION.
 # DESKS: SEA | EAS | CSA | LATAM | MEA | EME | G10
-#
-# ** ALL v3 ADDITIONS ARE # VERIFY: currency codes follow Yahoo's rigid
-#    "<ISO4217>=X" pattern (mechanically safe), but confirm Yahoo actually
-#    HAS a series -- 0 rows on ingest = drop the ticker, not a data gap. **
 # ===================================================================
 COUNTRIES = [
     # ---------------- SEA : Southeast Asia ----------------
@@ -289,7 +258,6 @@ COUNTRIES = [
     ("SWE", "Sweden",         "G10",   "DM",    "SEK=X"),
 ]
 
-# Full names (values) shown in the desk dropdown; keys are the codes.
 DESK_LABELS = {
     "SEA":   "Southeast Asia",
     "EAS":   "East Asia",
@@ -300,7 +268,6 @@ DESK_LABELS = {
     "G10":   "Developed Markets (G10)",
 }
 
-# Coarse tier labels (from the dm_em field) -> readable, for the UI.
 DMEM_LABELS = {
     "DM":    "Developed",
     "EM":    "Emerging",
@@ -309,20 +276,11 @@ DMEM_LABELS = {
 }
 
 # ===================================================================
-# CLASSIFICATION  ::  iso3 -> {msci, ftse, sp, imf, tier}   [v3: NEW]
-# Who calls this country what. The index providers DISAGREE and that is the
-# point (Korea EM on MSCI but DM on FTSE; Greece EM->DM on FTSE from 2026).
-#   msci/ftse/sp : "DM" | "EM" | "FM" | "-"   (- = not classified / standalone)
-#   imf          : "advanced" | "emerging" | "developing"
-#   tier         : "core" | "frontier" | "watch"  (EMDASH's own data-depth tier)
-#
-# ** ALL # VERIFY ** These lists are reviewed annually by each provider. Confirm
-# against the current MSCI / FTSE Russell / S&P Dow Jones country classification
-# PDFs before quoting. Any country missing here defaults (see classification_of)
-# to its coarse dm_em label so nothing breaks.
+# CLASSIFICATION  ::  iso3 -> {msci, ftse, sp, imf, tier}
+# ** ALL # VERIFY ** against current MSCI / FTSE / S&P reviews. Missing rows fall
+# back to the coarse dm_em label (see classification_of).
 # ===================================================================
 CLASSIFICATION = {  # VERIFY every row against current provider reviews
-    # ---- core EM / DM (index members with full data) ----
     "IDN": {"msci": "EM", "ftse": "EM", "sp": "EM", "imf": "emerging", "tier": "core"},
     "MYS": {"msci": "EM", "ftse": "EM", "sp": "EM", "imf": "emerging", "tier": "core"},
     "THA": {"msci": "EM", "ftse": "EM", "sp": "EM", "imf": "emerging", "tier": "core"},
@@ -369,7 +327,6 @@ CLASSIFICATION = {  # VERIFY every row against current provider reviews
     "CHE": {"msci": "DM", "ftse": "DM", "sp": "DM", "imf": "advanced", "tier": "core"},
     "NOR": {"msci": "DM", "ftse": "DM", "sp": "DM", "imf": "advanced", "tier": "core"},
     "SWE": {"msci": "DM", "ftse": "DM", "sp": "DM", "imf": "advanced", "tier": "core"},
-    # ---- frontier / watch (index-frontier or IMF-only; sparse market data) ----
     "BHR": {"msci": "FM", "ftse": "FM", "sp": "FM", "imf": "emerging", "tier": "frontier"},
     "OMN": {"msci": "FM", "ftse": "FM", "sp": "FM", "imf": "emerging", "tier": "frontier"},
     "JOR": {"msci": "FM", "ftse": "FM", "sp": "FM", "imf": "developing", "tier": "frontier"},
@@ -383,33 +340,38 @@ CLASSIFICATION = {  # VERIFY every row against current provider reviews
     "LVA": {"msci": "FM", "ftse": "FM", "sp": "-",  "imf": "advanced", "tier": "frontier"},
     "LTU": {"msci": "FM", "ftse": "FM", "sp": "-",  "imf": "advanced", "tier": "frontier"},
     "URY": {"msci": "-",  "ftse": "FM", "sp": "FM", "imf": "emerging", "tier": "frontier"},
-    # Everything else defaults to its coarse dm_em label + tier "watch"
-    # (see classification_of). Fill rows in above as you verify them.
 }
 
 # -------------------------------------------------------------------
-# TAGS  ::  (iso3, tag)  -- characteristic groupings (oil exporter, USD peg...)
-# Stored in country_tags; hook for cross-cutting views. Not yet used in the UI.
+# TAGS  ::  (iso3, tag)  -- characteristic groupings. v3.3: expanded.
 # -------------------------------------------------------------------
 TAGS = [
     ("SAU", "oil_exporter"), ("ARE", "oil_exporter"), ("QAT", "oil_exporter"),
     ("KWT", "oil_exporter"), ("OMN", "oil_exporter"), ("BHR", "oil_exporter"),
     ("NGA", "oil_exporter"), ("NOR", "oil_exporter"), ("COL", "oil_exporter"),
     ("KAZ", "oil_exporter"), ("AGO", "oil_exporter"), ("ECU", "oil_exporter"),
+    ("MEX", "oil_exporter"), ("BRN", "oil_exporter"),
     ("CHL", "metals_exporter"), ("PER", "metals_exporter"),
     ("ZAF", "metals_exporter"), ("AUS", "metals_exporter"),
     ("BRA", "metals_exporter"), ("ZMB", "metals_exporter"),
+    ("MNG", "metals_exporter"), ("BWA", "metals_exporter"),
     ("BRA", "ag_exporter"), ("ARG", "ag_exporter"), ("IDN", "ag_exporter"),
     ("MYS", "ag_exporter"), ("URY", "ag_exporter"), ("CIV", "ag_exporter"),
+    ("UKR", "ag_exporter"), ("VNM", "ag_exporter"), ("THA", "ag_exporter"),
     ("KOR", "tech_exporter"), ("TWN", "tech_exporter"), ("SGP", "tech_exporter"),
+    ("CHN", "tech_exporter"), ("JPN", "tech_exporter"),
     ("SAU", "usd_peg"), ("ARE", "usd_peg"), ("QAT", "usd_peg"),
     ("BHR", "usd_peg"), ("OMN", "usd_peg"), ("HKG", "usd_peg"),
     ("NAM", "zar_bloc"), ("BTN", "inr_bloc"),
     ("TUR", "high_yield"), ("ARG", "high_yield"), ("EGY", "high_yield"),
     ("NGA", "high_yield"), ("PAK", "high_yield"), ("GHA", "high_yield"),
-    ("UKR", "high_yield"), ("ZMB", "high_yield"),
+    ("UKR", "high_yield"), ("ZMB", "high_yield"), ("KEN", "high_yield"),
     ("ECU", "dollarised"), ("PAN", "dollarised"), ("SLV", "dollarised"),
     ("TLS", "dollarised"),
+    ("EGY", "tourism"), ("THA", "tourism"), ("TUR", "tourism"),
+    ("GRC", "tourism"), ("MAR", "tourism"), ("HRV", "tourism"),
+    ("PHL", "remittances"), ("EGY", "remittances"), ("PAK", "remittances"),
+    ("BGD", "remittances"), ("NPL", "remittances"), ("SLV", "remittances"),
 ]
 
 # -------------------------------------------------------------------
@@ -432,12 +394,11 @@ SOURCES = [
     ("seed",        "Seed (Bloomberg exports)",         "market",    "A", "static"),
 ]
 
-
 INDICATOR_LABELS = {
     "GDP_YOY": "GDP growth (% YoY)",
     "CPI_YOY": "Inflation (CPI % YoY)",
     "CURR_ACC_GDP": "Current account (% of GDP)",
-    "GOV_DEBT_GDP": "Govt debt (% of GDP)",   # yes -- it's the ratio
+    "GOV_DEBT_GDP": "Govt debt (% of GDP)",
     "UNEMPLOYMENT": "Unemployment (%)",
     "EXPORTS_GDP": "Exports (% of GDP)",
     "IMPORTS_GDP": "Imports (% of GDP)",
@@ -459,7 +420,6 @@ INDICATOR_LABELS = {
 
 # -------------------------------------------------------------------
 # WORLD BANK INDICATORS  ::  friendly name -> World Bank API code.
-# Annual by nature (most are computed once a year). ingest loops these.
 # -------------------------------------------------------------------
 WB_INDICATORS = {
     "GDP_YOY":      "NY.GDP.MKTP.KD.ZG",
@@ -470,48 +430,35 @@ WB_INDICATORS = {
     "EXPORTS_GDP":  "NE.EXP.GNFS.ZS",
     "FDI_GDP":      "BX.KLT.DINV.WD.GD.ZS",
     "RESERVES_USD": "FI.RES.TOTL.CD",
-    # ---- v3 additions (annual context; all standard WDI codes) ----
-    "GDP_PC_USD":   "NY.GDP.PCAP.CD",        # GDP per capita, USD       # VERIFY
-    "IMPORTS_GDP":  "NE.IMP.GNFS.ZS",        # imports % of GDP          # VERIFY
-    "GROSS_SAVINGS":"NY.GNS.ICTR.ZS",        # gross savings % of GDP    # VERIFY
-    "BROAD_MONEY":  "FM.LBL.BMNY.GD.ZS",     # broad money % of GDP      # VERIFY
-    "POP_TOTAL":    "SP.POP.TOTL",           # population                # VERIFY
+    "GDP_PC_USD":   "NY.GDP.PCAP.CD",        # VERIFY
+    "IMPORTS_GDP":  "NE.IMP.GNFS.ZS",        # VERIFY
+    "GROSS_SAVINGS":"NY.GNS.ICTR.ZS",        # VERIFY
+    "BROAD_MONEY":  "FM.LBL.BMNY.GD.ZS",     # VERIFY
+    "POP_TOTAL":    "SP.POP.TOTL",           # VERIFY
 }
 
-# DBnomics series  ::  friendly name -> (provider, dataset, series-mask)
-# The MONTHLY macro spine. IMF IFS masks; {iso2} filled per country.
-# ** Expansion masks are # VERIFY -- confirm each on db.nomics.world first;
-#    a wrong mask returns "no series published" (harmless, logged, not fatal). **
-# -------------------------------------------------------------------
 DBN_SERIES = {
     "POLICY_RATE":  ("IMF", "IFS", "M.{iso2}.FPOLM_PA"),
     "CPI_INDEX_M":  ("IMF", "IFS", "M.{iso2}.PCPI_IX"),
-    # ---- v3 additions: more MONTHLY macro (this is what "update monthly" needs)
     "FX_RATE_M":    ("IMF", "IFS", "M.{iso2}.ENDA_XDC_USD_RATE"),  # VERIFY
     "RESERVES_M":   ("IMF", "IFS", "M.{iso2}.RAFA_USD"),          # VERIFY
     "EXPORTS_M":    ("IMF", "IFS", "M.{iso2}.TXG_FOB_USD"),       # VERIFY
     "IMPORTS_M":    ("IMF", "IFS", "M.{iso2}.TMG_CIF_USD"),       # VERIFY
-    "IP_INDEX_M":   ("IMF", "IFS", "M.{iso2}.AIPMA_IX"),          # VERIFY (ind. prod.)
-    "M2_M":         ("IMF", "IFS", "M.{iso2}.FMB_XDC"),           # VERIFY (broad money)
+    "IP_INDEX_M":   ("IMF", "IFS", "M.{iso2}.AIPMA_IX"),          # VERIFY
+    "M2_M":         ("IMF", "IFS", "M.{iso2}.FMB_XDC"),           # VERIFY
 }
 
 # -------------------------------------------------------------------
-# COMMODITIES  ::  friendly name -> Yahoo futures ticker -> commodity_data
+# COMMODITIES  ::  friendly name -> Yahoo futures ticker
 # -------------------------------------------------------------------
 COMMODITIES = {
-    # ---- energy ----
     "BRENT": "BZ=F", "WTI": "CL=F", "NATGAS": "NG=F", "COAL": "MTF=F",
-    "GASOLINE": "RB=F", "HEATOIL": "HO=F",                          # VERIFY (v3)
-    # ---- metals ----
+    "GASOLINE": "RB=F", "HEATOIL": "HO=F",                          # VERIFY
     "GOLD": "GC=F", "SILVER": "SI=F", "COPPER": "HG=F", "ALUMIN": "ALI=F",
-    "IRON": "TIO=F", "PLATINUM": "PL=F", "PALLADIUM": "PA=F",       # VERIFY (v3)
-    # ---- ags / softs ----
+    "IRON": "TIO=F", "PLATINUM": "PL=F", "PALLADIUM": "PA=F",       # VERIFY
     "WHEAT": "ZW=F", "CORN": "ZC=F", "SOYBEAN": "ZS=F",
-    "SUGAR": "SB=F", "COFFEE": "KC=F", "COCOA": "CC=F", "COTTON": "CT=F",  # VERIFY (v3)
-    # ---- livestock ----
-    "CATTLE": "LE=F", "LEANHOGS": "HE=F",                           # VERIFY (v3)
-    # NOTE on COAL ("MTF=F"): if status.py flags it stale, prove the ticker
-    # rather than assume -- python ingest.py --only commodities --refresh.
+    "SUGAR": "SB=F", "COFFEE": "KC=F", "COCOA": "CC=F", "COTTON": "CT=F",  # VERIFY
+    "CATTLE": "LE=F", "LEANHOGS": "HE=F",                           # VERIFY
 }
 
 # -------------------------------------------------------------------
@@ -521,25 +468,18 @@ MARKET_TICKERS = {
     "DXY": "DX-Y.NYB", "VIX": "^VIX", "MOVE": "^MOVE",
     "SPX": "^GSPC", "EMB": "EMB", "EMHY": "EMHY", "GOLD_ETF": "GLD",
     "BTC": "BTC-USD",
-    # ---- US Treasury curve (global rate reads; feed Event Study rate work) ----
-    "US2Y":  "^IRX",   # 13-week bill proxy (^UST2Y not on Yahoo)   # VERIFY
-    "US5Y":  "^FVX",   # 5-year yield                               # VERIFY
-    "US10Y": "^TNX",   # 10-year yield
-    "US30Y": "^TYX",   # 30-year yield                              # VERIFY
-    # ---- v3 additions: extra risk/vol/EM gauges ----
-    "VVIX":  "^VVIX",  # vol of vol                                 # VERIFY
-    "EEM":   "EEM",    # EM equity ETF                              # VERIFY
-    "FXI":   "FXI",    # China large-cap ETF                        # VERIFY
-    # NOTE: HYG / LQD deliberately OMITTED. ETF PRICE moves OPPOSITE to OAS; if
-    # mis-wired into the MRC's STRESS_UP it reads a crisis as calm. If ever
-    # added, name them HY_ETF / IG_ETF (never *_OAS) and put in RISK_UP only.
+    "US2Y":  "^IRX",   # VERIFY
+    "US5Y":  "^FVX",   # VERIFY
+    "US10Y": "^TNX",
+    "US30Y": "^TYX",   # VERIFY
+    "VVIX":  "^VVIX",  # VERIFY
+    "EEM":   "EEM",    # VERIFY
+    "FXI":   "FXI",    # VERIFY
+    # HYG/LQD deliberately OMITTED (price moves opposite OAS).
 }
 
 # ===================================================================
-# EQUITY_INDICES  ::  iso3 -> Yahoo index ticker -> market_data("EQUITY")
-# Per-country stock index. Free coverage ~40 markets; the rest simply are not
-# in the dict (no blank rows, shown empty in the availability tab).   [v3: NEW]
-# ** ALL # VERIFY -- Yahoo index symbols are inconsistent (^ vs .SUFFIX). **
+# EQUITY_INDICES  ::  iso3 -> Yahoo index ticker
 # ===================================================================
 EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
     "USA": "^GSPC",   "EMU": "^STOXX50E", "GBR": "^FTSE",  "CAN": "^GSPTSE",
@@ -556,47 +496,21 @@ EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
     "GRC": "^ATG",    "ROU": "^BETI",
 }
 
-
 # ===================================================================
-# EQUITY_STOOQ  ::  iso3 -> Stooq symbol.  For indices NOT on Yahoo.   [v3.1]
-# Pulled from Stooq's CSV endpoint (stooq.com/q/d/l/?s=SYM&i=d) by
-# ingest.fetch_stooq_equities -> market_data, series="EQUITY", source_id="stooq".
-# ** ALL # VERIFY: run `python ingest.py --only stooq_eq` and drop 0-row rows. **
-# NOTE: this dict was defined TWICE in v3.1 (the second wins). Consolidated here
-# into ONE dict so the intended symbols aren't silently overridden.
+# EQUITY_STOOQ  ::  iso3 -> Stooq symbol (indices NOT on Yahoo)
+# Consolidated to ONE dict (was defined twice in v3.1).
 # ===================================================================
 EQUITY_STOOQ = {  # VERIFY every symbol
-    "POL": "^wig20",   # Poland WIG20
-    "CZE": "^px",      # Czech PX (Prague)
-    "HUN": "^bux",     # Hungary BUX
-    "ROU": "^bet",     # Romania BET
-    "GRC": "^atg",     # Greece Athens General (ASE)
-    "QAT": "^qsi",     # Qatar QE General            # VERIFY (may be absent)
-    "CHL": "^ipsa",    # Chile IPSA
-    "PER": "^spblg",   # Peru S&P/BVL
-    "TUR": "^xu100",   # Turkey BIST 100
-    "COL": "^colcap",  # Colombia COLCAP
-    "PAK": "^kse",     # Pakistan KSE
-    "AUT": "^atx",     # Austria ATX  (bonus -- if you add AUT later)
-    "PRT": "^psi20",   # Portugal PSI-20 (bonus)
-    "ESP": "^ibex",    # Spain IBEX (bonus)
-    "ITA": "^ftmib",   # Italy FTSE MIB (bonus)
+    "POL": "^wig20", "CZE": "^px",  "HUN": "^bux",  "ROU": "^bet",
+    "GRC": "^atg",   "QAT": "^qsi", "CHL": "^ipsa", "PER": "^spblg",
+    "TUR": "^xu100", "COL": "^colcap", "PAK": "^kse",
+    "AUT": "^atx",   "PRT": "^psi20", "ESP": "^ibex", "ITA": "^ftmib",
 }
 
-
 # ===================================================================
-# SOVEREIGN_YIELDS  ::  iso3 -> {tenor: source_spec}             [v3: NEW]
-# Government bond yields. Free DAILY yields are genuinely sparse; the US full
-# curve lives in MARKET_TICKERS (global). Here we hold what free per-country
-# yields exist. source_spec forms:
-#     ("fred",  "<FRED_ID>")     e.g. Germany 10y  = ("fred", "IRLTLT01DEM156N")
-#     ("yahoo", "<TICKER>")      where a Yahoo yield ticker exists
-# tenor keys: "2Y" | "5Y" | "10Y" | "30Y". Written to market_data as
-# series="Y2"/"Y5"/"Y10"/"Y30".
-# ** ALL # VERIFY -- FRED IRLTLT01 monthly long-rate IDs vary by country. **
+# SOVEREIGN_YIELDS  ::  iso3 -> {tenor: (src, id)}
 # ===================================================================
 SOVEREIGN_YIELDS = {  # VERIFY every id
-    # OECD monthly long-term (10y) rates via FRED "IRLTLT01<CC>M156N" pattern.
     "USA": {"2Y": ("fred", "DGS2"), "5Y": ("fred", "DGS5"),
             "10Y": ("fred", "DGS10"), "30Y": ("fred", "DGS30")},
     "GBR": {"10Y": ("fred", "IRLTLT01GBM156N")},
@@ -621,12 +535,7 @@ SOVEREIGN_YIELDS = {  # VERIFY every id
 }
 
 # ===================================================================
-# FX_FRED  ::  iso3 -> FRED daily FX id (deeper than Yahoo)      [v3: NEW]
-# Yahoo EM FX often starts ~2003. FRED DEX* series reach the 1970s-90s for the
-# majors, free and daily. ingest backfills FROM here, THEN tops up with Yahoo,
-# so the joined series is as long as the source allows. All are USD-quoted;
-# some are "LCY per USD", some "USD per LCY" -- ingest normalises by config.
-# ** ALL # VERIFY -- and check the quote DIRECTION per series. **
+# FX_FRED  ::  iso3 -> FRED daily FX id (deeper than Yahoo)
 # ===================================================================
 FX_FRED = {  # VERIFY id + quote direction
     "JPN": "DEXJPUS",  "GBR": "DEXUSUK",  "EMU": "DEXUSEU",  "CAN": "DEXCAUS",
@@ -634,15 +543,10 @@ FX_FRED = {  # VERIFY id + quote direction
     "CHN": "DEXCHUS",  "KOR": "DEXKOUS",  "IND": "DEXINUS",  "SGP": "DEXSIUS",
     "HKG": "DEXHKUS",  "TWN": "DEXTAUS",  "THA": "DEXTHUS",  "MYS": "DEXMAUS",
     "BRA": "DEXBZUS",  "MEX": "DEXMXUS",  "ZAF": "DEXSFUS",  "NZL": "DEXUSNZ",
-    # direction note: DEXUSUK/DEXUSEU/DEXUSAL/DEXUSNZ are USD-per-LCY (inverted).
 }
 
 # -------------------------------------------------------------------
-# CREDIT SPREADS  ::  friendly name -> FRED series id (ICE BofA OAS, daily, %).
-# Collector exists (ingest.fetch_fred). Rows land in global_market so mrc.py
-# uses them automatically. FIREWALL NOTE: fred.stlouisfed.org may be blocked on
-# the office network -- if fetch_fred returns 0 with ConnectionReset, that is a
-# firewall, not a bad config. Test api.stlouisfed.org as an alternate host.
+# CREDIT SPREADS  ::  friendly name -> FRED series id (ICE BofA OAS)
 # -------------------------------------------------------------------
 FRED_SERIES = {
     "IG_OAS":      "BAMLC0A0CM",
@@ -651,26 +555,17 @@ FRED_SERIES = {
     "EM_CORP_OAS": "BAMLEMCBPIOAS",
     "EM_HY_OAS":   "BAMLEMHBHYCRPIOAS",
     "EM_SOV_OAS":  "BAMLEMPBPUBSICRPIOAS",
-    # "US_HY_YIELD": "BAMLH0A0HYM2EY",   # optional context
 }
 
-# USD SWAP SPREADS -- KIV (Bloomberg-only, no clean free daily source).
-# mrc.py already knows key "SWAP_SPREAD_10Y" and starts using it when rows
-# appear -- a future Bloomberg collector writes it, no code change here.
-
 # -------------------------------------------------------------------
-# PREDICTION MARKETS (Polymarket)  ::  free public Gamma API.       [v3.1]
-# fetch_predmarkets pulls the most active/liquid markets -> predmarket_data
-# (date, market_id, question, prob, venue). Snapshot per run (today's prob),
-# so running weekly builds a probability time-series you can chart later.
+# PREDICTION MARKETS (Polymarket)
 # -------------------------------------------------------------------
 POLYMARKET_API   = "https://gamma-api.polymarket.com/markets"
-PREDMARKET_LIMIT = 120      # how many active markets to snapshot per run
-PREDMARKET_MIN_VOL = 10000  # skip illiquid markets below this USD volume
-
+PREDMARKET_LIMIT = 120
+PREDMARKET_MIN_VOL = 10000
 
 # ===================================================================
-# MACRO REGIME CLASSIFIER (MRC)   -- read by mrc.py
+# MACRO REGIME CLASSIFIER (MRC)
 # ===================================================================
 MRC_Z_WINDOW = 252
 MRC_HI = 0.75
@@ -678,9 +573,7 @@ MRC_LO = -0.75
 MRC_STABLE = 0.5
 MRC_MIN_SCORE = 2.0
 MRC_MIN_DAYS = 5
-# NOTE: mrc.py v3 (pending install) adds MRC_MIN_MARGIN (winner must beat
-# runner-up by N votes or the day is Neutral). Uncomment when v3 is installed:
-# MRC_MIN_MARGIN = 2.0
+# MRC_MIN_MARGIN = 2.0   # uncomment when mrc.py v3 installed
 
 # ===================================================================
 # NEWS LAYER
@@ -692,30 +585,15 @@ NEWS_SHOW_TZ_BADGE = True
 SHOW_FAVICONS = True
 FAVICON_URL = "https://icons.duckduckgo.com/ip3/{domain}.ico"
 
-# How many days of news to keep (used by prune_news / the "Clear old news" btn).
 NEWS_PRUNE_DAYS = 90
 
 # -------------------------------------------------------------------
-# RSS_FEEDS  ::  (source_id, name, tier, url).  Validate with:
-#   python status.py --feeds     (or the one-liner in the v3.2 header)
-#
-# v3.2 NEWS-SOURCES PASS: expanded from ~24 to ~43 feeds.
-#   + official:  World Bank news
-#   + research:  IMF Blog, PIIE, CFR, Project Syndicate, CEPR VoxEU
-#   + global:    The Economist, BBC Business, CNBC Economy/World
-#   + local EM:  Economic Times, LiveMint (IND); Caixin (CHN); Jakarta Post
-#                (IDN); Hurriyet (TUR); Moneyweb (ZAF); Buenos Aires Times (ARG)
-#   + social:    Reddit r/economics, r/emergingmarkets, r/geopolitics
-#   - dropped:   banxico  (Banco de Mexico has NO press RSS -- stats only)
-#   - NOT added: X/Twitter (killed public RSS in 2023; no reliable free feed)
-#
-# ** EVERY # VERIFY url MUST be tested FROM YOUR PC with the browser-UA patch
-#    (news_ingest.py) before you trust it. Cloudflare-fronted feeds (Bruegel,
-#    Reddit) return HTTP 403 to feedparser's default UA -- the UA patch fixes
-#    that. A timeout/ConnectionReset = office firewall (retest from home). **
+# RSS_FEEDS  ::  (source_id, name, tier, url).  Validate with the header
+# one-liner. v3.3 adds pan-regional wires + single-country locals for coverage.
+# ** EVERY # VERIFY url MUST be tested FROM YOUR PC with the browser-UA patch. **
 # -------------------------------------------------------------------
 RSS_FEEDS = [
-    # ---- Tier A : central banks / official ----
+    # ==== Tier A : central banks / official ====
     ("fed",        "US Federal Reserve (press)",   "A", "https://www.federalreserve.gov/feeds/press_all.xml"),
     ("ecb",        "European Central Bank (press)", "A", "https://www.ecb.europa.eu/rss/press.html"),             # VERIFY
     ("boe",        "Bank of England (news)",        "A", "https://www.bankofengland.co.uk/rss/news"),
@@ -725,14 +603,12 @@ RSS_FEEDS = [
     ("rba",        "Reserve Bank of Australia",     "A", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"), # VERIFY
     ("rbi",        "Reserve Bank of India",         "A", "https://www.rbi.org.in/Scripts/Rss.aspx"),              # VERIFY
     ("bcb",        "Banco Central do Brasil",       "A", "https://www.bcb.gov.br/api/feed/sitebcb/en-us/lastnews"),# VERIFY
-    ("cbrt",       "Central Bank of Turkey",        "A", "https://www.tcmb.gov.tr/rss/announcements_eng.xml"),    # VERIFY (may not exist)
-    ("sarb",       "South African Reserve Bank",    "A", "https://www.resbank.co.za/en/home/publications/RssFeed"),# VERIFY (gated)
-    ("imf",        "IMF (news)",                    "A", "https://www.imf.org/en/News/RSS?Language=ENG"),         # VERIFY
-    ("worldbank",  "World Bank (news)",             "A", "https://www.worldbank.org/en/news/all?format=rss"),    # VERIFY
     ("bis_press",  "BIS (press releases)",          "A", "https://www.bis.org/doclist/all_pressrels.rss"),       # firewall@office
     ("bis_speech", "BIS (central banker speeches)", "A", "https://www.bis.org/doclist/cbspeeches.rss"),          # firewall@office
+    # NOTE dropped (dead @office 2026-08-09, no fix): banxico(no RSS), cbrt(404),
+    # sarb(404 gated), imf(403), worldbank(200/0). Those come via GDELT + locals.
 
-    # ---- Tier A/B : global press ----
+    # ==== Tier A/B : global press ====
     ("ft_em",      "FT Emerging Markets",           "A", "https://www.ft.com/emerging-markets?format=rss"),
     ("ft_econ",    "FT Global Economy",             "A", "https://www.ft.com/global-economy?format=rss"),
     ("ft_mkts",    "FT Markets",                    "A", "https://www.ft.com/markets?format=rss"),
@@ -742,37 +618,65 @@ RSS_FEEDS = [
     ("cnbc_world", "CNBC World",                    "B", "https://www.cnbc.com/id/100727362/device/rss/rss.html"),
     ("guardian",   "The Guardian (business)",       "B", "https://www.theguardian.com/business/rss"),
     ("aljazeera",  "Al Jazeera",                    "B", "https://www.aljazeera.com/xml/rss/all.xml"),
+    ("dw",         "Deutsche Welle (world)",        "B", "https://rss.dw.com/rdf/rss-en-all"),                    # VERIFY
+    ("france24",   "France 24 (world)",             "B", "https://www.france24.com/en/rss"),                     # VERIFY
+
+    # ==== Tier B : PAN-REGIONAL wires (one feed -> a whole region) ====
+    ("bne",        "bne IntelliNews (EM wire)",     "B", "https://www.intellinews.com/feed"),                    # VERIFY (100+ EM countries)
+    ("allafrica",  "allAfrica (pan-Africa)",        "B", "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf"), # VERIFY
+    ("mercopress", "MercoPress (LatAm/Mercosur)",   "B", "https://en.mercopress.com/rss"),                       # VERIFY
+    ("africanews", "Africanews",                    "B", "https://www.africanews.com/feed/rss"),                 # VERIFY
+    ("cna",        "Channel NewsAsia",              "B", "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"), # VERIFY
+
+    # ==== Tier B : Asia locals ====
     ("nikkei_asia","Nikkei Asia",                   "B", "https://asia.nikkei.com/rss/feed/nar"),
     ("diplomat",   "The Diplomat (Asia)",           "B", "https://thediplomat.com/feed/"),
     ("scmp_econ",  "SCMP Economy",                  "B", "https://www.scmp.com/rss/318198/feed"),
-
-    # ---- Tier B : research / think tanks ----
-    ("bruegel",    "Bruegel (think tank)",          "B", "https://www.bruegel.org/rss.xml"),                     # 403 was UA-block -> UA patch fixes
-    ("imf_blog",   "IMF Blog",                      "B", "https://www.imf.org/en/Blogs/rss"),                    # VERIFY
-    ("piie",       "PIIE",                          "B", "https://www.piie.com/rss/all"),                        # VERIFY
-    ("cfr",        "Council on Foreign Relations",  "B", "https://www.cfr.org/rss.xml"),                         # VERIFY
-    ("proj_synd",  "Project Syndicate (economics)", "B", "https://www.project-syndicate.org/rss"),               # VERIFY
-    ("voxeu",      "CEPR VoxEU",                    "B", "https://cepr.org/rss/voxeu.xml"),                       # VERIFY
-
-    # ---- Tier B : regional / local EM outlets (fill non-G10 coverage) ----
     ("et_markets", "Economic Times Markets (IND)",  "B", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"), # VERIFY
     ("livemint",   "LiveMint Markets (IND)",        "B", "https://www.livemint.com/rss/markets"),                # VERIFY
-    ("caixin",     "Caixin Global (CHN)",           "B", "https://www.caixinglobal.com/rss/feed.xml"),           # VERIFY
-    ("jakartapost","Jakarta Post (IDN)",            "B", "https://www.thejakartapost.com/rss"),                  # VERIFY
-    ("hurriyet",   "Hurriyet Daily News (TUR)",     "B", "https://www.hurriyetdailynews.com/rss"),               # VERIFY
-    ("moneyweb",   "Moneyweb (ZAF)",                "B", "https://www.moneyweb.co.za/feed/"),                    # VERIFY
-    ("ba_times",   "Buenos Aires Times (ARG)",      "B", "https://www.batimes.com.ar/feed"),                     # VERIFY
+    ("dawn",       "Dawn (Pakistan)",               "B", "https://www.dawn.com/feeds/home"),                     # VERIFY
+    ("bdstar",     "The Daily Star (Bangladesh)",   "B", "https://www.thedailystar.net/rss.xml"),                # VERIFY
+    ("koreaherald","Korea Herald",                  "B", "http://www.koreaherald.com/rss/020000000000.xml"),     # VERIFY
+    ("taipeitimes","Taipei Times (Taiwan)",         "B", "https://www.taipeitimes.com/xml/index.rss"),           # VERIFY
+    ("vnexpress",  "VnExpress International (VNM)",  "B", "https://e.vnexpress.net/rss/news.rss"),                # VERIFY
+    ("bangkokpost","Bangkok Post (Thailand)",       "B", "https://www.bangkokpost.com/rss/data/topstories.xml"), # VERIFY
+    ("jakartapost","Jakarta Post (IDN)",            "B", "https://rss.thejakartapost.com/home"),                 # VERIFY
 
-    # ---- Tier C : "social" (Reddit has RSS; needs the UA patch) ----
-    # NOTE: X/Twitter KILLED public RSS in 2023 -- no reliable free feed exists.
+    # ==== Tier B : MENA locals ====
+    ("arabnews",   "Arab News (Saudi/Gulf)",        "B", "https://www.arabnews.com/rss.xml"),                    # VERIFY
+    ("gulfnews",   "Gulf News (UAE)",               "B", "https://gulfnews.com/rss?generatorType=news"),         # VERIFY
+    ("timesofisrael","Times of Israel",             "B", "https://www.timesofisrael.com/feed/"),                 # VERIFY
+    ("hurriyet",   "Hurriyet Daily News (TUR)",     "B", "https://www.hurriyetdailynews.com/rss"),               # VERIFY
+
+    # ==== Tier B : Africa locals ====
+    ("moneyweb",   "Moneyweb (ZAF)",                "B", "https://www.moneyweb.co.za/feed/"),                    # VERIFY
+    ("dailymaverick","Daily Maverick (ZAF)",        "B", "https://www.dailymaverick.co.za/rss/"),                # VERIFY
+    ("premiumtimes","Premium Times (Nigeria)",      "B", "https://www.premiumtimesng.com/feed"),                 # VERIFY
+    ("nationkenya","Nation (Kenya)",                "B", "https://nation.africa/kenya/rss"),                     # VERIFY
+
+    # ==== Tier B : LatAm + EM Europe locals ====
+    ("ba_times",   "Buenos Aires Times (ARG)",      "B", "https://www.batimes.com.ar/feed"),                     # VERIFY
+    ("riotimes",   "Rio Times (Brazil)",            "B", "https://www.riotimesonline.com/feed/"),                # VERIFY
+    ("notesfrompoland","Notes from Poland",         "B", "https://notesfrompoland.com/feed/"),                   # VERIFY
+    ("kyivindependent","Kyiv Independent (UKR)",    "B", "https://kyivindependent.com/feed/"),                   # VERIFY
+
+    # ==== Tier B : research / think tanks ====
+    ("bruegel",    "Bruegel (think tank)",          "B", "https://www.bruegel.org/rss.xml"),                     # UA patch fixes 403
+    ("imf_blog",   "IMF Blog",                      "B", "https://www.imf.org/en/Blogs/rss"),                    # VERIFY
+    ("piie",       "PIIE",                          "B", "https://www.piie.com/rss/all"),                        # VERIFY
+    ("cfr",        "Council on Foreign Relations",  "B", "https://www.cfr.org/feed"),                            # VERIFY
+    ("proj_synd",  "Project Syndicate (economics)", "B", "https://www.project-syndicate.org/rss"),               # VERIFY
+    ("voxeu",      "CEPR VoxEU",                    "B", "https://cepr.org/rss/vox-content"),                    # VERIFY
+
+    # ==== Tier C : "social" (Reddit has RSS; needs UA patch + rate-limit) ====
     ("r_economics","Reddit r/economics",            "C", "https://www.reddit.com/r/economics/.rss"),             # VERIFY (UA-gated)
-    ("r_em",       "Reddit r/emergingmarkets",      "C", "https://www.reddit.com/r/emergingmarkets/.rss"),       # VERIFY
-    ("r_geopol",   "Reddit r/geopolitics",          "C", "https://www.reddit.com/r/geopolitics/.rss"),           # VERIFY
+    ("r_em",       "Reddit r/emergingmarkets",      "C", "https://www.reddit.com/r/emergingmarkets/.rss"),       # VERIFY (429-prone)
+    ("r_geopol",   "Reddit r/geopolitics",          "C", "https://www.reddit.com/r/geopolitics/.rss"),           # VERIFY (429-prone)
+    # X/Twitter deliberately NOT added -- no public RSS since 2023.
 ]
 
 # -------------------------------------------------------------------
-# DOMAIN_TIER  ::  domain -> tier.  Promotes GDELT firehose by publisher.
-# v3.2: extended to cover the new feed publishers.
+# DOMAIN_TIER  ::  domain -> tier. Promotes GDELT firehose by publisher.
 # -------------------------------------------------------------------
 DOMAIN_TIER = {
     "reuters.com": "A", "ft.com": "A", "bloomberg.com": "A",
@@ -788,34 +692,44 @@ DOMAIN_TIER = {
     "asia.nikkei.com": "B", "thediplomat.com": "B",
     "cfr.org": "B", "bruegel.org": "B", "project-syndicate.org": "B",
     "foreignpolicy.com": "B", "politico.com": "B", "cnn.com": "B",
-    # ---- v3.2 additions ----
     "piie.com": "B", "cepr.org": "B",
     "economictimes.indiatimes.com": "B", "livemint.com": "B",
     "caixinglobal.com": "B", "thejakartapost.com": "B",
     "hurriyetdailynews.com": "B", "moneyweb.co.za": "B",
     "batimes.com.ar": "B", "reddit.com": "C",
+    # ---- v3.3 additions ----
+    "dw.com": "B", "france24.com": "A", "intellinews.com": "A",
+    "allafrica.com": "B", "mercopress.com": "B", "africanews.com": "B",
+    "channelnewsasia.com": "B", "dawn.com": "B", "thedailystar.net": "B",
+    "koreaherald.com": "B", "taipeitimes.com": "B", "vnexpress.net": "B",
+    "bangkokpost.com": "B", "arabnews.com": "B", "gulfnews.com": "B",
+    "timesofisrael.com": "B", "dailymaverick.co.za": "B",
+    "premiumtimesng.com": "B", "nation.africa": "B",
+    "riotimesonline.com": "B", "notesfrompoland.com": "B",
+    "kyivindependent.com": "B",
 }
 
 # -------------------------------------------------------------------
-# FEED_ORIGIN_ISO  ::  source_id -> iso3 fallback for feeds that are ABOUT one
-# country (central banks + single-country local outlets). Used when the headline
-# itself names no country, so the row still gets a desk instead of "(no desk)".
-# v3.2: local EM outlets added.
+# FEED_ORIGIN_ISO  ::  source_id -> iso3 fallback for SINGLE-COUNTRY feeds.
+# Used when the headline names no country, so the row still gets a desk.
+# Pan-regional wires (bne/allafrica/mercopress/dw/france24/cna/africanews) are
+# intentionally UNSET -- they're multi-country and rely on headline tagging.
 # -------------------------------------------------------------------
 FEED_ORIGIN_ISO = {
     "fed": "USA", "ecb": "EMU", "boe": "GBR", "boj": "JPN", "boc": "CAN",
-    "bok": "KOR",
-    "rbi": "IND", "bcb": "BRA", "banxico": "MEX", "sarb": "ZAF",
-    "cbrt": "TUR", "rba": "AUS",
-    # ---- v3.2: local single-country outlets ----
-    "et_markets": "IND", "livemint": "IND",
-    "caixin": "CHN", "jakartapost": "IDN", "hurriyet": "TUR",
-    "moneyweb": "ZAF", "ba_times": "ARG",
-    # (global/research feeds intentionally unset -- they're multi-country)
+    "bok": "KOR", "rbi": "IND", "bcb": "BRA", "rba": "AUS",
+    # ---- single-country locals ----
+    "et_markets": "IND", "livemint": "IND", "dawn": "PAK", "bdstar": "BGD",
+    "koreaherald": "KOR", "taipeitimes": "TWN", "vnexpress": "VNM",
+    "bangkokpost": "THA", "jakartapost": "IDN", "hurriyet": "TUR",
+    "arabnews": "SAU", "gulfnews": "ARE", "timesofisrael": "ISR",
+    "moneyweb": "ZAF", "dailymaverick": "ZAF", "premiumtimes": "NGA",
+    "nationkenya": "KEN", "ba_times": "ARG", "riotimes": "BRA",
+    "notesfrompoland": "POL", "kyivindependent": "UKR",
 }
 
 # -------------------------------------------------------------------
-# GDELT  ::  search-API call (not RSS). Fixed columns, no sentiment field.
+# GDELT  ::  search-API call (not RSS).
 # -------------------------------------------------------------------
 GDELT_ENABLED     = FEATURE_FLAGS["ingest_gdelt"]
 GDELT_TIER        = "C"
@@ -826,82 +740,161 @@ GDELT_EM_ONLY     = False
 GDELT_SLEEP_SEC   = 2.0
 
 # -------------------------------------------------------------------
-# NEWS_COUNTRY_ALIASES  ::  keyword -> iso3 (word-boundary matched in
-# news_ingest.py; entries <4 chars or on ALIAS_BLOCKLIST are inert -- use
-# qualified forms). MERGED on top of news_ingest.BASE_ALIASES.
+# NEWS_COUNTRY_ALIASES  ::  keyword -> iso3 (LOWERCASE, word-boundary matched;
+# merged on top of news_ingest.BASE_ALIASES). Entries <4 chars or on
+# ALIAS_BLOCKLIST are inert. For UPPERCASE acronyms (US/UK/EU/UAE) that must NOT
+# match their lowercase words, see news_ingest.ACRONYM_ALIASES (case-sensitive).
+#
+# RULES when extending: >=4 chars; never a plain English word; prefer capital +
+# demonym + institution; avoid ambiguous personal names.
+# v3.3: filled in the smaller / WATCH countries that previously had only their
+# bare country name -> this is what shrinks the "(no desk)" pile.
 # -------------------------------------------------------------------
 NEWS_COUNTRY_ALIASES = {
-    # --- United States ---
-    "fed": "USA", "federal reserve": "USA", "fomc": "USA", "treasury": "USA",
-    "white house": "USA", "congress": "USA", "wall street": "USA",
-    "trump": "USA", "biden": "USA", "powell": "USA", "washington": "USA",
-    # --- Eurozone ---
-    "ecb": "EMU", "euro area": "EMU", "eurozone": "EMU", "brussels": "EMU",
-    "lagarde": "EMU",
-    # --- China / Japan / UK / India ---
-    "pboc": "CHN", "beijing": "CHN", "xi jinping": "CHN", "renminbi": "CHN",
-    "boj": "JPN", "tokyo": "JPN",
-    "boe": "GBR", "starmer": "GBR", "sterling": "GBR",
-    "rbi": "IND", "new delhi": "IND", "rupee": "IND",
-    # --- SEA ---
-    "bank indonesia": "IDN", "jakarta": "IDN", "prabowo": "IDN", "rupiah": "IDN",
-    "marcos": "PHL", "monetary authority of singapore": "SGP",
-    "ringgit": "MYS",
-    # --- Korea / LATAM / Turkey / SA / Nigeria ---
-    "seoul": "KOR",
-    "lula": "BRA", "brasilia": "BRA",
-    "sheinbaum": "MEX", "milei": "ARG", "buenos aires": "ARG",
-    "erdogan": "TUR", "ankara": "TUR",
-    "ramaphosa": "ZAF", "pretoria": "ZAF",
-    "naira": "NGA",
-    # --- CEE currencies ---
-    "zloty": "POL", "forint": "HUN", "koruna": "CZE", "tenge": "KAZ",
-    # v3: a few added for new majors (qualified forms only, >=4 chars)
-    "riyadh": "SAU", "abu dhabi": "ARE", "doha": "QAT", "kuwait city": "KWT",
-    "tel aviv": "ISR", "athens": "GRC", "kyiv": "UKR", "nairobi": "KEN",
-    "accra": "GHA", "casablanca": "MAR",
+    # ===== G10 / majors (supplement BASE_ALIASES) =====
+    "fomc": "USA", "treasury": "USA", "white house": "USA", "congress": "USA",
+    "wall street": "USA", "biden": "USA", "powell": "USA", "pentagon": "USA",
+    "hawaii": "USA", "manhattan": "USA", "silicon valley": "USA",
+    "eurozone": "EMU", "euro area": "EMU", "brussels": "EMU", "lagarde": "EMU",
+    "european commission": "EMU", "frankfurt": "EMU",
+    "starmer": "GBR", "westminster": "GBR", "whitehall": "GBR", "sterling": "GBR",
+    "ottawa": "CAN", "carney": "CAN", "canberra": "AUS", "sydney": "AUS",
+    "wellington": "NZL", "zurich": "CHE", "geneva": "CHE",
+    "oslo": "NOR", "stockholm": "SWE",
+    # ===== EAS / SEA =====
+    "beijing": "CHN", "shanghai": "CHN", "xi jinping": "CHN", "renminbi": "CHN",
+    "tokyo": "JPN", "seoul": "KOR", "taipei": "TWN", "hong kong": "HKG",
+    "jakarta": "IDN", "prabowo": "IDN", "rupiah": "IDN",
+    "kuala lumpur": "MYS", "anwar": "MYS", "ringgit": "MYS",
+    "bangkok": "THA", "paetongtarn": "THA",
+    "manila": "PHL", "marcos": "PHL",
+    "hanoi": "VNM", "ho chi minh": "VNM",
+    "phnom penh": "KHM", "cambodian": "KHM", "vientiane": "LAO", "laotian": "LAO",
+    "naypyidaw": "MMR", "yangon": "MMR", "myanmar junta": "MMR",
+    "ulaanbaatar": "MNG", "mongolian": "MNG",
+    "pyongyang": "PRK", "kim jong": "PRK",
+    "bandar seri begawan": "BRN", "bruneian": "BRN", "dili": "TLS",
+    # ===== CSA =====
+    "new delhi": "IND", "mumbai": "IND", "modi": "IND",
+    "islamabad": "PAK", "karachi": "PAK", "lahore": "PAK",
+    "dhaka": "BGD", "bangladeshi": "BGD",
+    "colombo": "LKA", "sri lankan": "LKA",
+    "astana": "KAZ", "almaty": "KAZ", "kazakh": "KAZ",
+    "kabul": "AFG", "taliban": "AFG", "afghan": "AFG",
+    "kathmandu": "NPL", "nepali": "NPL", "nepalese": "NPL",
+    "thimphu": "BTN", "bhutanese": "BTN",
+    "tashkent": "UZB", "uzbek": "UZB", "bishkek": "KGZ", "kyrgyz": "KGZ",
+    "dushanbe": "TJK", "tajik": "TJK", "male maldives": "MDV", "maldivian": "MDV",
+    # ===== LATAM =====
+    "brasilia": "BRA", "sao paulo": "BRA", "lula": "BRA",
+    "mexico city": "MEX", "sheinbaum": "MEX",
+    "santiago": "CHL", "chilean": "CHL", "bogota": "COL", "colombian": "COL",
+    "lima": "PER", "peruvian": "PER",
+    "buenos aires": "ARG", "milei": "ARG",
+    "montevideo": "URY", "uruguayan": "URY", "quito": "ECU", "ecuadorian": "ECU",
+    "la paz": "BOL", "bolivian": "BOL", "asuncion": "PRY", "paraguayan": "PRY",
+    "caracas": "VEN", "maduro": "VEN", "venezuelan": "VEN",
+    "panama city": "PAN", "panamanian": "PAN",
+    "san jose costa rica": "CRI", "costa rican": "CRI",
+    "santo domingo": "DOM", "dominican": "DOM", "kingston jamaica": "JAM",
+    "jamaican": "JAM", "guatemala city": "GTM", "guatemalan": "GTM",
+    "tegucigalpa": "HND", "honduran": "HND",
+    "san salvador": "SLV", "bukele": "SLV", "salvadoran": "SLV",
+    "managua": "NIC", "ortega": "NIC", "nicaraguan": "NIC",
+    # ===== MEA =====
+    "pretoria": "ZAF", "johannesburg": "ZAF", "cape town": "ZAF",
+    "ramaphosa": "ZAF", "riyadh": "SAU", "jeddah": "SAU", "saudi": "SAU",
+    "abu dhabi": "ARE", "dubai": "ARE", "emirati": "ARE",
+    "doha": "QAT", "qatari": "QAT", "kuwait city": "KWT", "kuwaiti": "KWT",
+    "cairo": "EGY", "egyptian": "EGY", "sisi": "EGY",
+    "tel aviv": "ISR", "jerusalem": "ISR", "netanyahu": "ISR", "israeli": "ISR",
+    "manama": "BHR", "bahraini": "BHR", "muscat": "OMN", "omani": "OMN",
+    "amman": "JOR", "jordanian": "JOR",
+    "rabat": "MAR", "casablanca": "MAR", "moroccan": "MAR",
+    "tunis": "TUN", "tunisian": "TUN",
+    "abuja": "NGA", "lagos": "NGA", "tinubu": "NGA", "naira": "NGA",
+    "nairobi": "KEN", "kenyan": "KEN", "accra": "GHA", "ghanaian": "GHA",
+    "addis ababa": "ETH", "ethiopian": "ETH", "luanda": "AGO", "angolan": "AGO",
+    "dodoma": "TZA", "dar es salaam": "TZA", "tanzanian": "TZA",
+    "kampala": "UGA", "ugandan": "UGA", "museveni": "UGA",
+    "lusaka": "ZMB", "zambian": "ZMB", "harare": "ZWE", "zimbabwean": "ZWE",
+    "maputo": "MOZ", "mozambican": "MOZ", "windhoek": "NAM", "namibian": "NAM",
+    "kigali": "RWA", "rwandan": "RWA", "gaborone": "BWA", "botswana pula": "BWA",
+    "dakar": "SEN", "senegalese": "SEN", "abidjan": "CIV", "ivorian": "CIV",
+    # ===== EME =====
+    "warsaw": "POL", "polish": "POL", "zloty": "POL", "tusk": "POL",
+    "budapest": "HUN", "orban": "HUN", "forint": "HUN",
+    "prague": "CZE", "czech": "CZE", "koruna": "CZE",
+    "ankara": "TUR", "istanbul": "TUR", "erdogan": "TUR",
+    "athens": "GRC", "greek": "GRC", "bucharest": "ROU", "romanian": "ROU",
+    "belgrade": "SRB", "serbian": "SRB", "vucic": "SRB",
+    "zagreb": "HRV", "croatian": "HRV", "ljubljana": "SVN", "slovenian": "SVN",
+    "tallinn": "EST", "estonian": "EST", "riga": "LVA", "latvian": "LVA",
+    "vilnius": "LTU", "lithuanian": "LTU",
+    "reykjavik": "ISL", "icelandic": "ISL",
+    "kyiv": "UKR", "kiev": "UKR", "zelensky": "UKR", "ukrainian": "UKR",
+    "minsk": "BLR", "lukashenko": "BLR", "belarusian": "BLR",
+    "tirana": "ALB", "albanian": "ALB", "sarajevo": "BIH", "bosnian": "BIH",
+    "chisinau": "MDA", "moldovan": "MDA", "podgorica": "MNE", "montenegrin": "MNE",
+    "skopje": "MKD", "macedonian": "MKD",
 }
 
 # -------------------------------------------------------------------
-# NEWS_TOPICS  ::  topic key -> keyword list. Matched in news_ingest.topics_of.
-# v2 matcher is WORD-BOUNDARY safe (the "gold"/"Goldman" bug is fixed), so this
-# DATA is fine as-is. A trailing "*" on a keyword means "prefix/stem match".
+# NEWS_TOPICS  ::  topic key -> keyword list (word-boundary matched, "*"=stem).
+# v3.3: more geopolitics + new "disaster" topic so fewer rows fall to General.
 # -------------------------------------------------------------------
 NEWS_TOPICS = {
     "central_bank":  ["rate", "rates", "central bank", "policy rate", "hike",
                       "rate cut", "hawkish", "dovish", "monetary", "tightening",
                       "easing", "fomc", "boj", "ecb", "pboc", "rate decision",
-                      "interest rate"],
-    "econ_data":     ["gdp", "cpi", "ppi", "inflation", "pmi", "payroll",
-                      "payrolls", "unemployment", "jobs", "retail sales",
-                      "industrial production", "trade balance", "data print",
-                      "forecast", "revised"],
-    "trade":         ["trade", "tariff", "export", "import", "customs",
-                      "supply chain", "wto"],
+                      "interest rate", "quantitative", "liquidity"],
+    "econ_data":     ["gdp", "cpi", "ppi", "inflation", "deflation", "pmi",
+                      "payroll", "payrolls", "unemployment", "jobs",
+                      "retail sales", "industrial production", "trade balance",
+                      "data print", "forecast", "revised", "recession",
+                      "growth", "output", "budget", "deficit", "surplus"],
+    "trade":         ["trade", "tariff", "tariffs", "export", "import",
+                      "customs", "supply chain", "wto", "trade war", "embargo",
+                      "quota", "trade deal"],
     "rates_credit":  ["bond", "yield", "debt", "default", "credit", "spread",
-                      "downgrade", "rating", "sovereign", "restructuring",
-                      "treasury", "curve", "duration", "imf loan", "bailout"],
+                      "downgrade", "upgrade", "rating", "sovereign",
+                      "restructuring", "treasury", "curve", "duration",
+                      "imf loan", "bailout", "eurobond", "issuance"],
     "fx":            ["currency", "fx", "exchange rate", "devaluation", "peg",
-                      "reserves", "capital flows", "depreciat", "appreciat"],
+                      "reserves", "capital flows", "depreciat", "appreciat",
+                      "intervention", "carry trade"],
     "commodities":   ["oil", "brent", "crude", "opec", "gas", "lng", "copper",
                       "gold", "iron ore", "wheat", "soybean", "commodity",
-                      "commodities", "metals"],
+                      "commodities", "metals", "nickel", "lithium", "cobalt",
+                      "palm oil", "grain"],
     "equities":      ["stocks", "equity", "equities", "shares", "ipo", "index",
-                      "market rally", "selloff"],
+                      "market rally", "selloff", "bourse", "listing", "buyback"],
     "energy":        ["energy", "power", "electricity", "renewable", "nuclear",
-                      "coal", "pipeline"],
+                      "coal", "pipeline", "solar", "hydro", "grid", "refinery",
+                      "blackout"],
     "technology":    ["chip", "semiconductor", "ai ", "tech", "data center",
-                      "technology", "startup", "artificial intelligence"],
+                      "technology", "startup", "artificial intelligence",
+                      "rare earth", "rare-earth", "ev ", "battery", "cloud"],
     "geopolitics":   ["election", "government", "president", "coup", "protest",
                       "war", "conflict", "minister", "parliament", "coalition",
-                      "referendum", "sanctions", "military", "geopolitic"],
+                      "referendum", "sanctions", "sanction", "military",
+                      "geopolitic", "ceasefire", "truce", "airstrike", "strike",
+                      "troops", "border", "occupation", "hostage", "kidnap",
+                      "missile", "drone", "militant", "insurgent", "rebels",
+                      "junta", "martial law", "impeach", "cabinet", "summit",
+                      "treaty", "alliance", "nato", "embassy", "diplomat",
+                      "talks", "nuclear weapon", "warhead", "annexation"],
+    "disaster":      ["wildfire", "flood", "flooding", "earthquake", "typhoon",
+                      "hurricane", "cyclone", "drought", "famine", "volcano",
+                      "landslide", "storm", "evacuat", "death toll", "monsoon",
+                      "heatwave", "outbreak", "epidemic"],
     "china":         ["china", "beijing", "yuan", "pboc", "xi jinping",
-                      "property", "evergrande"],
+                      "property", "evergrande", "belt and road"],
 }
 
 # -------------------------------------------------------------------
-# LOOK & FEEL  ::  SMU Emerging Markets palette + Segoe UI. Mirror colour edits
-# in assets/emdash.css (:root).
+# LOOK & FEEL  ::  SMU EM palette + Segoe UI. Mirror colour edits in
+# assets/emdash.css (:root).
 # -------------------------------------------------------------------
 PALETTE = {
     "canvas": "#E9EBEF", "gold": "#948A54", "navy1": "#1F497D",
@@ -919,39 +912,30 @@ REGIME_COLORS = {
 # Helpers
 # -------------------------------------------------------------------
 def iso3_to_iso2(iso3: str) -> str:
-    """3-letter -> 2-letter ISO (used to build IMF/DBnomics masks). Extended in
-    v3 to cover every country in COUNTRIES; a blank return means DBnomics is
-    skipped for that country (logged loudly by ingest, not silent)."""
+    """3-letter -> 2-letter ISO (IMF/DBnomics masks). Blank = DBnomics skipped."""
     _MAP = {
-        # SEA
         "IDN": "ID", "MYS": "MY", "THA": "TH", "PHL": "PH", "VNM": "VN",
         "SGP": "SG", "KHM": "KH", "LAO": "LA", "MMR": "MM", "BRN": "BN",
         "TLS": "TL",
-        # EAS
         "CHN": "CN", "KOR": "KR", "TWN": "TW", "JPN": "JP", "HKG": "HK",
         "MNG": "MN", "PRK": "KP",
-        # CSA
         "IND": "IN", "PAK": "PK", "BGD": "BD", "LKA": "LK", "KAZ": "KZ",
         "AFG": "AF", "NPL": "NP", "BTN": "BT", "MDV": "MV", "UZB": "UZ",
         "KGZ": "KG", "TJK": "TJ",
-        # LATAM
         "BRA": "BR", "MEX": "MX", "CHL": "CL", "COL": "CO", "PER": "PE",
         "ARG": "AR", "URY": "UY", "ECU": "EC", "BOL": "BO", "PRY": "PY",
         "VEN": "VE", "PAN": "PA", "CRI": "CR", "DOM": "DO", "JAM": "JM",
         "GTM": "GT", "HND": "HN", "SLV": "SV", "NIC": "NI",
-        # MEA
         "ZAF": "ZA", "SAU": "SA", "ARE": "AE", "QAT": "QA", "KWT": "KW",
         "EGY": "EG", "ISR": "IL", "BHR": "BH", "OMN": "OM", "JOR": "JO",
         "MAR": "MA", "TUN": "TN", "NGA": "NG", "KEN": "KE", "GHA": "GH",
         "ETH": "ET", "AGO": "AO", "TZA": "TZ", "UGA": "UG", "ZMB": "ZM",
         "ZWE": "ZW", "MOZ": "MZ", "NAM": "NA", "RWA": "RW", "BWA": "BW",
         "SEN": "SN", "CIV": "CI",
-        # EME
         "POL": "PL", "HUN": "HU", "CZE": "CZ", "TUR": "TR", "GRC": "GR",
         "ROU": "RO", "SRB": "RS", "HRV": "HR", "SVN": "SI", "EST": "EE",
         "LVA": "LV", "LTU": "LT", "ISL": "IS", "UKR": "UA", "BLR": "BY",
         "ALB": "AL", "BIH": "BA", "MDA": "MD", "MNE": "ME", "MKD": "MK",
-        # G10
         "USA": "US", "EMU": "U2", "GBR": "GB", "CAN": "CA", "AUS": "AU",
         "NZL": "NZ", "CHE": "CH", "NOR": "NO", "SWE": "SE",
     }
@@ -959,9 +943,7 @@ def iso3_to_iso2(iso3: str) -> str:
 
 
 def classification_of(iso3: str) -> dict:
-    """Full agency classification for a country. Falls back to the coarse dm_em
-    label from COUNTRIES if the country is not yet in CLASSIFICATION, so the UI
-    always has something to show and nothing breaks."""
+    """Full agency classification; falls back to coarse dm_em if not listed."""
     if iso3 in CLASSIFICATION:
         return CLASSIFICATION[iso3]
     dmem = next((dm for i, n, d, dm, fx in COUNTRIES if i == iso3), "-")
@@ -971,50 +953,21 @@ def classification_of(iso3: str) -> dict:
 
 
 def tier_of(iso3: str) -> str:
-    """EMDASH data-depth tier: core | frontier | watch."""
     return classification_of(iso3).get("tier", "watch")
 
 
 # ===================================================================
-# DATA GAPS  ::  what is missing and what to do about it.
-# The Data Availability tab (module_database) now shows this LIVE per series;
-# this block is the human-readable "why", so you don't chase data that does
-# not exist.
+# DATA GAPS  ::  what is missing and what to do about it (human-readable).
 # ===================================================================
-#
-# STRUCTURAL (do not chase; free sources genuinely lack these):
-#   TWN (Taiwan) macro          Not a WB / IMF reporting member -> no WDI/IFS.
-#                               Has market data (FX, ^TWII), lacks WB macro.
-#   WATCH-tier countries        Many frontier/IMF-expanded states have WB annual
-#                               macro + news only: no tradeable FX, no index, no
-#                               free daily yield. Expected -- shown blank in the
-#                               availability tab, never faked. That is the point
-#                               of adding them: news coverage + macro context.
-#   Dollarised (ECU/PAN/SLV/TLS) and EUR users (GRC/Baltics/HRV/SVN/MNE)
-#                               have fx_ticker="" by design -- no own currency.
-#
-# SPARSE-BY-NATURE (only where a free series exists):
-#   EQUITY_INDICES ~40 markets  the rest have no free Yahoo index.
-#   SOVEREIGN_YIELDS ~20        free daily/monthly yields are rare outside DM +
-#                               big EM. US full curve is complete.
-#
-# FIXABLE (a wrong symbol/mask, not a missing country):
-#   Any # VERIFY that pulls 0 rows -> bad ticker/mask. Fix the symbol; don't
-#   assume the data is missing. Confirm with:
-#       python ingest.py --only globals   (etc.)   then   python status.py
-#   POLICY_RATE / CPI_INDEX_M blanks for some countries -> test one IFS mask by
-#   hand: https://api.db.nomics.world/v22/series/IMF/IFS/M.TR.FPOLM_PA?observations=1
-#   Empty docs = wrong concept code for that country, not your code.
-#
-# NEWS FEEDS (v3.2): every # VERIFY url must be tested from your PC with the
-#   browser-UA patch. banxico dropped (no press RSS). X/Twitter has no public
-#   RSS since 2023. bis_* correct-but-firewalled at the office.
-#
-# CREDIT SPREADS (FRED): collector exists. If fetch_fred returns 0 with a
-#   ConnectionReset, that is the office firewall on fred.stlouisfed.org, not
-#   config. Test the alternate host api.stlouisfed.org (needs a free key).
-#
-# BLOOMBERG (future, part-time): CDS, USD swap spreads, and any series the free
-#   stack can't reach slot in as a source_id="bloomberg" collector writing to
-#   the SAME tables. Nothing here changes when that lands. Licensing: clear with
-#   Johnson/compliance before Bloomberg values sit in the shared SQLite.
+# STRUCTURAL (do not chase): TWN macro (not WB/IMF member); WATCH-tier countries
+#   (WB annual + news only, no tradeable FX/index/yield -- blank on purpose);
+#   dollarised/EUR users have fx_ticker="" by design.
+# SPARSE-BY-NATURE: EQUITY_INDICES ~40 markets; SOVEREIGN_YIELDS ~20.
+# FIXABLE: any # VERIFY that pulls 0 rows = bad symbol/mask, not missing data.
+# NEWS FEEDS (v3.3): every # VERIFY url must be tested from your PC with the
+#   browser-UA patch. Dead-at-office (retest home): ecb/rba/bis/some locals.
+#   Genuinely no-RSS: banxico, cbrt, sarb, X/Twitter -> covered via GDELT.
+# NEWS TAGGING (v3.3): "(no desk)" that remains is mostly countries NOT in the
+#   105-country universe (Iran, Iraq, Russia, Syria, Palestine, etc.). Those can
+#   only be tagged if added to COUNTRIES -- a deliberate scope decision.
+# CREDIT SPREADS / BLOOMBERG: unchanged (see prior notes).
