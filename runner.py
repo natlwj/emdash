@@ -1,23 +1,29 @@
 """
-EMDASH :: runner.py   (v5)
+EMDASH :: runner.py   (v6)
 ===================================================================
 BACKGROUND PULL RUNNER + real Pull buttons + a live status pill.
 
 Each button launches work as a BACKGROUND SUBPROCESS so the dashboard never
 freezes. A concurrency guard stops two jobs at once.
 
-v5 CHANGES
-  * REAL BUTTONS. v4 wrapped each button in a bordered "island" card, which
-    looked like an info panel rather than a clickable control. v5 renders each
-    as an actual filled button (SMU-palette accent, white text, rounded, subtle
-    shadow); the description is a hover tooltip, not visible body text.
-  * POLL NO LONGER CHURNS THE PAGE. v4 re-rendered the pills every 2s while a
-    job ran (constant _dash-update-component POSTs + visible flicker). v5's
-    poll returns no_update UNLESS the status actually changed, so the page is
-    static while "Running..." holds and only updates on Running->Done/Failed.
-    (The interval is still fully DISABLED when idle -> zero polling at rest.)
-  * NAME: the news depth control is "Pull window (GDELT)" -- clearly a PULL
-    setting, distinct from the News tab's "Show news from" DISPLAY filter.
+v6 CHANGES
+  * NEWS PULL SPLIT INTO TWO BUTTONS.
+        "Pull feeds (RSS)"  -> news_ingest.py --only rss    (the ~43 feeds)
+        "Pull GDELT"        -> news_ingest.py --only gdelt  (per-country search)
+    RSS feeds serve only the last day or two and IGNORE the pull window; GDELT
+    is the one that accepts a look-back depth. So only "Pull GDELT" is wired to
+    the "Pull window (GDELT)" dropdown -- which is exactly why the dropdown is
+    labelled (GDELT). The old combined "pull-news" id is kept as an ALIAS so any
+    older layout that still calls buttons_bar(["pull-news", ...]) keeps working.
+  * News tab should now call:
+        runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"])
+
+v5 CHANGES (unchanged here)
+  * REAL BUTTONS (filled, SMU-palette accent), description as a hover tooltip.
+  * POLL NO LONGER CHURNS: the poll returns no_update UNLESS the status snapshot
+    actually changed, and the interval is fully DISABLED when idle.
+  * "Pull window (GDELT)" is a PULL setting, distinct from the News tab's
+    "Show news from" DISPLAY filter.
 
 DUPLICATES: news PK is (ts,url) + INSERT OR IGNORE, so re-pulling only adds
 genuinely new rows -- pulling often is safe and cheap.
@@ -51,12 +57,31 @@ ROOT = config.ROOT
 PRUNE_DAYS = int(getattr(config, "NEWS_PRUNE_DAYS", 90))
 
 JOBS = {
+    # ---- NEWS: split into RSS vs GDELT (v6) ----
+    "pull-rss": {
+        "label": "Pull feeds (RSS)",
+        "script": "news_ingest.py", "args": ["--only", "rss"],
+        "desc": "Fetch the latest headlines from the RSS/Atom feeds "
+                "(central banks, wires, local EM outlets). Serves the last day "
+                "or two only; the pull-window dropdown does NOT affect these.",
+        "accent": P["navy2"],
+    },
+    "pull-gdelt": {
+        "label": "Pull GDELT",
+        "script": "news_ingest.py", "args": ["--only", "gdelt"],
+        "desc": "Per-country GDELT search. Uses the 'Pull window (GDELT)' "
+                "dropdown to decide how far back to reach.",
+        "uses_since": True, "accent": P["navy3"],
+    },
+    # Back-compat alias: old layouts that still ask for "pull-news" get the
+    # combined RSS+GDELT pull. Safe to leave; new layout uses the two above.
     "pull-news": {
-        "label": "Pull News",
+        "label": "Pull News (all)",
         "script": "news_ingest.py", "args": [],
         "desc": "Fetch the latest headlines (RSS + GDELT). Safe to run often.",
         "uses_since": True, "accent": P["navy2"],
     },
+    # ---- MARKETS / MACRO ----
     "pull-markets": {
         "label": "Pull Markets",
         "script": "ingest.py",
@@ -119,7 +144,7 @@ def _launch(job_id, since=None) -> None:
         with _lock:
             _state[job_id] = {"status": "failed", "started": _now(),
                               "finished": _now(), "rc": -1,
-                              "tail": f"{job.get('script','?')} not found"}
+                              "tail": f"{job.get('script', '?')} not found"}
         return
     env = dict(os.environ)
     if job.get("uses_since") and since:
@@ -166,10 +191,10 @@ def _status_pill(job_id, s):
     if st == "running":
         txt, col, bg = "Running...", P["navy1"], "#EAF0F9"
     elif st == "done":
-        txt = f"Done {s.get('finished','')} - {s.get('tail','')[:60]}"
+        txt = f"Done {s.get('finished', '')} - {s.get('tail', '')[:60]}"
         col, bg = P["good"], "#E4F0E6"
     elif st == "failed":
-        txt = f"Failed {s.get('finished','')} - {s.get('tail','')[:60]}"
+        txt = f"Failed {s.get('finished', '')} - {s.get('tail', '')[:60]}"
         col, bg = P["bad"], "#F7E4E1"
     else:
         return html.Span()      # idle -> blank
@@ -219,9 +244,10 @@ def news_since():
                      style={"width": "150px"},
                      options=[{"label": l, "value": v} for l, v in SINCE_OPTS]),
     ], className="emd-ctrl-group",
-        title="How far back GDELT reaches WHEN YOU CLICK Pull News. This is a "
-              "PULL setting - it does not change what is displayed. Use "
-              "'Show news from' for that.")
+        title="How far back GDELT reaches WHEN YOU CLICK Pull GDELT. This is a "
+              "PULL setting - it does not change what is displayed, and it does "
+              "NOT affect the RSS feeds. Use 'Show news from' to change what is "
+              "displayed.")
 
 
 def status_store():
@@ -286,8 +312,11 @@ def register(app):
 #   ... after server = app.server:   runner.register(app)
 #   ... in serve_layout() after dcc.Store(id="_persist_sink"):
 #         runner.status_store(),
-#   ... News tab -- see _tab_news layout in app.py (display row + pull row).
-#   SQLite Store buttons render inside database_tab (imports runner).
+#   ... News tab FETCH row -- change the buttons_bar call to the split buttons:
+#         runner.news_since(),
+#         runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"]),
+#   SQLite Store buttons render inside database_tab (imports runner) and use
+#     ["pull-markets", "pull-macro", "pull-all"] -- unchanged.
 #
 # Optional config: NEWS_PRUNE_DAYS = 90.
 # ===================================================================

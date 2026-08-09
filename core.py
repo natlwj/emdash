@@ -424,13 +424,33 @@ def news_coverage(db_path=None) -> dict:
 # -------------------------------------------------------------------
 def prune_news(days: int, db_path=None) -> int:
     """Delete news older than `days` days. Returns rows deleted."""
-    cutoff = (dt.datetime.now() - dt.timedelta(days=int(days))).isoformat()
+    cutoff = (dt.datetime.now(dt.UTC).replace(tzinfo=None)
+        - dt.timedelta(days=int(days))).isoformat()
     conn = get_conn(db_path)
     cur = conn.execute("DELETE FROM news WHERE ts < ?", (cutoff,))
     conn.commit()
     n = cur.rowcount
     conn.close()
     return n
+
+def dedupe_news(db_path=None) -> int:
+    """Collapse news rows that share a URL, keeping the earliest ts per URL,
+    then add a UNIQUE index on url so future INSERT OR IGNORE dedupes by URL.
+
+    ROOT CAUSE this fixes: the (ts,url) primary key only blocks a re-pull if
+    BOTH match. Some feeds (e.g. Nikkei) publish no parseable date, so
+    news_ingest._parse_entry_time falls back to 'now' -> a fresh ts every pull
+    -> (ts,url) looks new -> duplicate. The URL is the stable article identity,
+    so we dedupe on that instead. Idempotent: safe to run every pull."""
+    conn = get_conn(db_path)
+    before = conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]
+    conn.execute("DELETE FROM news WHERE rowid NOT IN "
+                 "(SELECT MIN(rowid) FROM news GROUP BY url)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_news_url ON news(url)")
+    conn.commit()
+    after = conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]
+    conn.close()
+    return before - after
 
 
 if __name__ == "__main__":

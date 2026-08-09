@@ -1,5 +1,5 @@
 """
-EMDASH :: config.py   (v3)
+EMDASH :: config.py   (v3.2)
 
 THE CONTROL PANEL. This is the only file you edit to change WHAT EMDASH covers
 or how it looks. No logic lives here -- pure settings.
@@ -28,6 +28,24 @@ Everything downstream (core, ingest, news_ingest, signals, mrc, app) reads
 from here.
 
 DESK CODES: SEA . EAS . CSA . LATAM . MEA . EME . G10
+
+==============================================================================
+WHAT CHANGED IN v3.2   (news-sources pass)
+==============================================================================
+* RSS_FEEDS greatly expanded (~24 -> ~43): added World Bank, Economist, BBC,
+  CNBC, IMF Blog, PIIE, CFR, Project Syndicate, CEPR VoxEU, a set of LOCAL EM
+  outlets (Economic Times / LiveMint / Caixin / Jakarta Post / Hurriyet /
+  Moneyweb / Buenos Aires Times), and Reddit (r/economics, r/emergingmarkets,
+  r/geopolitics). Dropped banxico (Banco de Mexico has NO press RSS -- stats
+  only; Mexico now comes via GDELT + local press). X/Twitter deliberately NOT
+  added -- it killed public RSS in 2023.
+* DOMAIN_TIER + FEED_ORIGIN_ISO extended to match the new feeds.
+* ** EVERY new/changed feed URL is # VERIFY **. Run FROM YOUR PC after applying
+  the news_ingest.py browser-UA patch (feedparser's default UA gets 403s from
+  Cloudflare-fronted sites like Bruegel/Reddit):
+      python -c "import feedparser,config; ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'; [print(f'{s:12} HTTP {getattr(feedparser.parse(u,agent=ua),chr(34)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115)+chr(34),chr(63))!s:>4} n={len(feedparser.parse(u,agent=ua).entries):>3} {n}') for s,n,t,u in config.RSS_FEEDS]"
+  Keep OK (n>0), drop DEAD. A timeout/ConnectionReset = office firewall, retest
+  from home; HTTP 404 = wrong URL; HTTP 403 = still bot-blocked.
 
 ==============================================================================
 WHAT CHANGED IN v3   (the "big data" pass -- meant to last a long time)
@@ -129,11 +147,9 @@ FEATURE_FLAGS = {
     "ingest_fred":        True,     # credit spreads (collector exists in v2)
     "ingest_gdelt":       True,
     "ingest_rss":         True,
-    "ingest_predmarkets": False,
-    "ingest_trends":      False,
-
-    "ingest_stooq_eq":    True,     # v3.1: equity indices Yahoo can't reach
     "ingest_predmarkets": True,     # v3.1: Polymarket (was a stub) -> now real
+    "ingest_trends":      False,
+    "ingest_stooq_eq":    True,     # v3.1: equity indices Yahoo can't reach
     # ---- dashboard tabs ----
     "module_database":    True,     # v3 NEW: Data Availability tab (FIRST tab)
     "module_news":        True,
@@ -264,7 +280,7 @@ COUNTRIES = [
     # ---------------- G10 : Developed Markets ----------------
     ("USA", "United States",  "G10",   "DM",    ""),        # DXY substitute
     ("EMU", "Eurozone",       "G10",   "DM",    "EUR=X"),
-    ("GBR", "United Kingdom",  "G10",   "DM",    "GBP=X"),
+    ("GBR", "United Kingdom", "G10",   "DM",    "GBP=X"),
     ("CAN", "Canada",         "G10",   "DM",    "CAD=X"),
     ("AUS", "Australia",      "G10",   "DM",    "AUD=X"),
     ("NZL", "New Zealand",    "G10",   "DM",    "NZD=X"),
@@ -421,7 +437,7 @@ INDICATOR_LABELS = {
     "GDP_YOY": "GDP growth (% YoY)",
     "CPI_YOY": "Inflation (CPI % YoY)",
     "CURR_ACC_GDP": "Current account (% of GDP)",
-    "GOV_DEBT_GDP": "Govt debt (% of GDP)",   # yes — it's the ratio
+    "GOV_DEBT_GDP": "Govt debt (% of GDP)",   # yes -- it's the ratio
     "UNEMPLOYMENT": "Unemployment (%)",
     "EXPORTS_GDP": "Exports (% of GDP)",
     "IMPORTS_GDP": "Imports (% of GDP)",
@@ -531,7 +547,7 @@ EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
     "SWE": "^OMX",    "JPN": "^N225",     "HKG": "^HSI",   "SGP": "^STI",
     "KOR": "^KS11",   "TWN": "^TWII",     "CHN": "000001.SS",
     "IND": "^NSEI",   "IDN": "^JKSE",     "MYS": "^KLSE",  "THA": "^SET.BK",
-    "PHL": "PSEI.PS","VNM": "^VNINDEX.VN",  "PAK": "^KSE",
+    "PHL": "PSEI.PS", "VNM": "^VNINDEX.VN", "PAK": "^KSE",
     "BRA": "^BVSP",   "MEX": "^MXX",      "CHL": "^IPSA",  "COL": "^COLCAP",
     "ARG": "^MERV",   "PER": "^SPBLPGPT",
     "ZAF": "^JN0U.JO","SAU": "^TASI.SR",  "ISR": "^TA125.TA",
@@ -546,13 +562,9 @@ EQUITY_INDICES = {  # VERIFY every symbol with `ingest.py --only equities`
 # Pulled from Stooq's CSV endpoint (stooq.com/q/d/l/?s=SYM&i=d) by
 # ingest.fetch_stooq_equities -> market_data, series="EQUITY", source_id="stooq".
 # ** ALL # VERIFY: run `python ingest.py --only stooq_eq` and drop 0-row rows. **
+# NOTE: this dict was defined TWICE in v3.1 (the second wins). Consolidated here
+# into ONE dict so the intended symbols aren't silently overridden.
 # ===================================================================
-EQUITY_STOOQ = {
-    "POL": "^wig20", "CZE": "^px",  "HUN": "^bux",  "ROU": "^bet",
-    "GRC": "^atg",   "QAT": "^qsi", "CHL": "^ipsa", "PER": "^spblg",
-    "TUR": "^xu100", "COL": "^colcap", "PAK": "^kse",
-}
-
 EQUITY_STOOQ = {  # VERIFY every symbol
     "POL": "^wig20",   # Poland WIG20
     "CZE": "^px",      # Czech PX (Prague)
@@ -560,6 +572,11 @@ EQUITY_STOOQ = {  # VERIFY every symbol
     "ROU": "^bet",     # Romania BET
     "GRC": "^atg",     # Greece Athens General (ASE)
     "QAT": "^qsi",     # Qatar QE General            # VERIFY (may be absent)
+    "CHL": "^ipsa",    # Chile IPSA
+    "PER": "^spblg",   # Peru S&P/BVL
+    "TUR": "^xu100",   # Turkey BIST 100
+    "COL": "^colcap",  # Colombia COLCAP
+    "PAK": "^kse",     # Pakistan KSE
     "AUT": "^atx",     # Austria ATX  (bonus -- if you add AUT later)
     "PRT": "^psi20",   # Portugal PSI-20 (bonus)
     "ESP": "^ibex",    # Spain IBEX (bonus)
@@ -672,57 +689,95 @@ NEWS_TZ_OFFSET_HOURS = 8
 NEWS_TZ_LABEL = "SGT"
 NEWS_SHOW_TZ_BADGE = True
 
-SHOW_FAVICONS = True 
+SHOW_FAVICONS = True
 FAVICON_URL = "https://icons.duckduckgo.com/ip3/{domain}.ico"
+
+# How many days of news to keep (used by prune_news / the "Clear old news" btn).
+NEWS_PRUNE_DAYS = 90
 
 # -------------------------------------------------------------------
 # RSS_FEEDS  ::  (source_id, name, tier, url).  Validate with:
-#   python status.py --feeds
-# v3: ECB filled + 6 EM central banks enabled. ** RE-RUN --feeds FROM YOUR PC
-# to confirm liveness before trusting -- feeds rot and the office firewall
-# blocks some hosts (BIS). Keep OK, drop DEAD. **
+#   python status.py --feeds     (or the one-liner in the v3.2 header)
+#
+# v3.2 NEWS-SOURCES PASS: expanded from ~24 to ~43 feeds.
+#   + official:  World Bank news
+#   + research:  IMF Blog, PIIE, CFR, Project Syndicate, CEPR VoxEU
+#   + global:    The Economist, BBC Business, CNBC Economy/World
+#   + local EM:  Economic Times, LiveMint (IND); Caixin (CHN); Jakarta Post
+#                (IDN); Hurriyet (TUR); Moneyweb (ZAF); Buenos Aires Times (ARG)
+#   + social:    Reddit r/economics, r/emergingmarkets, r/geopolitics
+#   - dropped:   banxico  (Banco de Mexico has NO press RSS -- stats only)
+#   - NOT added: X/Twitter (killed public RSS in 2023; no reliable free feed)
+#
+# ** EVERY # VERIFY url MUST be tested FROM YOUR PC with the browser-UA patch
+#    (news_ingest.py) before you trust it. Cloudflare-fronted feeds (Bruegel,
+#    Reddit) return HTTP 403 to feedparser's default UA -- the UA patch fixes
+#    that. A timeout/ConnectionReset = office firewall (retest from home). **
 # -------------------------------------------------------------------
 RSS_FEEDS = [
     # ---- Tier A : central banks / official ----
-    ("fed",        "US Federal Reserve (press)",    "A", "https://www.federalreserve.gov/feeds/press_all.xml"),
-    ("ecb",        "European Central Bank (press)",  "A", "https://www.ecb.europa.eu/rss/press.html"),   # VERIFY (v3)
-    ("boe",        "Bank of England (news)",         "A", "https://www.bankofengland.co.uk/rss/news"),
-    ("boj",        "Bank of Japan (what's new)",     "A", "https://www.boj.or.jp/en/rss/whatsnew.xml"),
-    ("boc",        "Bank of Canada",                 "A", "https://www.bankofcanada.ca/feed/"),
-    ("bok",        "Bank of Korea (news)",           "A", "https://www.bok.or.kr/eng/bbs/E0000634/news.rss"),
-    ("rbi",        "Reserve Bank of India",          "A", "https://www.rbi.org.in/Scripts/Rss.aspx"),               # VERIFY (v3)
-    ("bcb",        "Banco Central do Brasil",        "A", "https://www.bcb.gov.br/api/feed/sitebcb/pt-br/ultimas"), # VERIFY (v3)
-    ("banxico",    "Banco de Mexico",                "A", "https://www.banxico.org.mx/rss/rss.xml"),                # VERIFY (v3)
-    ("sarb",       "South African Reserve Bank",     "A", "https://www.resbank.co.za/en/home/publications/RssFeed"),# VERIFY (v3)
-    ("cbrt",       "Central Bank of Turkey",         "A", "https://www.tcmb.gov.tr/rss/announcements_eng.xml"),     # VERIFY (v3)
-    ("rba",        "Reserve Bank of Australia",      "A", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"),  # VERIFY (v3)
-    ("imf",        "IMF (news)",                     "A", "https://www.imf.org/en/news/rss"),
-    ("ft_em",      "FT Emerging Markets",            "A", "https://www.ft.com/emerging-markets?format=rss"),
-    ("ft_econ",    "FT Global Economy",              "A", "https://www.ft.com/global-economy?format=rss"),
-    ("ft_mkts",    "FT Markets",                     "A", "https://www.ft.com/markets?format=rss"),
-    # bis_*: confirmed-correct URLs but DEAD on the office network (firewall/UA).
-    # Kept ACTIVE; re-test off-network. Drop only if still dead there.
-    ("bis_press",  "BIS (press releases)",           "A", "https://www.bis.org/doclist/all_pressrels.rss"),   # DEAD@office?
-    ("bis_speech", "BIS (central banker speeches)",  "A", "https://www.bis.org/doclist/cbspeeches.rss"),      # DEAD@office?
-    # ---- Tier B : research / quality press ----
-    ("bruegel",    "Bruegel (think tank)",           "B", "https://www.bruegel.org/rss.xml"),
-    ("guardian",   "The Guardian (business)",        "B", "https://www.theguardian.com/business/rss"),
-    ("nikkei_asia","Nikkei Asia",                    "B", "https://asia.nikkei.com/rss/feed/nar"),
-    ("diplomat",   "The Diplomat (Asia)",            "B", "https://thediplomat.com/feed/"),
-    ("aljazeera",  "Al Jazeera",                     "B", "https://www.aljazeera.com/xml/rss/all.xml"),
-    ("scmp_econ",  "SCMP Economy",                   "B", "https://www.scmp.com/rss/318198/feed"),
-    # ---- more candidates (uncomment + --feeds test) ----
-    # ("piie",     "PIIE",                           "B", "https://www.piie.com/rss.xml"),
-    # ("imf_blog", "IMF Blog",                       "B", "https://www.imf.org/en/Blogs/rss"),
+    ("fed",        "US Federal Reserve (press)",   "A", "https://www.federalreserve.gov/feeds/press_all.xml"),
+    ("ecb",        "European Central Bank (press)", "A", "https://www.ecb.europa.eu/rss/press.html"),             # VERIFY
+    ("boe",        "Bank of England (news)",        "A", "https://www.bankofengland.co.uk/rss/news"),
+    ("boj",        "Bank of Japan (what's new)",    "A", "https://www.boj.or.jp/en/rss/whatsnew.xml"),
+    ("boc",        "Bank of Canada",                "A", "https://www.bankofcanada.ca/feed/"),
+    ("bok",        "Bank of Korea (news)",          "A", "https://www.bok.or.kr/eng/bbs/E0000634/news.rss"),      # VERIFY
+    ("rba",        "Reserve Bank of Australia",     "A", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"), # VERIFY
+    ("rbi",        "Reserve Bank of India",         "A", "https://www.rbi.org.in/Scripts/Rss.aspx"),              # VERIFY
+    ("bcb",        "Banco Central do Brasil",       "A", "https://www.bcb.gov.br/api/feed/sitebcb/en-us/lastnews"),# VERIFY
+    ("cbrt",       "Central Bank of Turkey",        "A", "https://www.tcmb.gov.tr/rss/announcements_eng.xml"),    # VERIFY (may not exist)
+    ("sarb",       "South African Reserve Bank",    "A", "https://www.resbank.co.za/en/home/publications/RssFeed"),# VERIFY (gated)
+    ("imf",        "IMF (news)",                    "A", "https://www.imf.org/en/News/RSS?Language=ENG"),         # VERIFY
+    ("worldbank",  "World Bank (news)",             "A", "https://www.worldbank.org/en/news/all?format=rss"),    # VERIFY
+    ("bis_press",  "BIS (press releases)",          "A", "https://www.bis.org/doclist/all_pressrels.rss"),       # firewall@office
+    ("bis_speech", "BIS (central banker speeches)", "A", "https://www.bis.org/doclist/cbspeeches.rss"),          # firewall@office
+
+    # ---- Tier A/B : global press ----
+    ("ft_em",      "FT Emerging Markets",           "A", "https://www.ft.com/emerging-markets?format=rss"),
+    ("ft_econ",    "FT Global Economy",             "A", "https://www.ft.com/global-economy?format=rss"),
+    ("ft_mkts",    "FT Markets",                    "A", "https://www.ft.com/markets?format=rss"),
+    ("economist",  "The Economist (Fin & Econ)",    "A", "https://www.economist.com/finance-and-economics/rss.xml"), # VERIFY
+    ("bbc_biz",    "BBC Business",                  "B", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+    ("cnbc_econ",  "CNBC Economy",                  "B", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
+    ("cnbc_world", "CNBC World",                    "B", "https://www.cnbc.com/id/100727362/device/rss/rss.html"),
+    ("guardian",   "The Guardian (business)",       "B", "https://www.theguardian.com/business/rss"),
+    ("aljazeera",  "Al Jazeera",                    "B", "https://www.aljazeera.com/xml/rss/all.xml"),
+    ("nikkei_asia","Nikkei Asia",                   "B", "https://asia.nikkei.com/rss/feed/nar"),
+    ("diplomat",   "The Diplomat (Asia)",           "B", "https://thediplomat.com/feed/"),
+    ("scmp_econ",  "SCMP Economy",                  "B", "https://www.scmp.com/rss/318198/feed"),
+
+    # ---- Tier B : research / think tanks ----
+    ("bruegel",    "Bruegel (think tank)",          "B", "https://www.bruegel.org/rss.xml"),                     # 403 was UA-block -> UA patch fixes
+    ("imf_blog",   "IMF Blog",                      "B", "https://www.imf.org/en/Blogs/rss"),                    # VERIFY
+    ("piie",       "PIIE",                          "B", "https://www.piie.com/rss/all"),                        # VERIFY
+    ("cfr",        "Council on Foreign Relations",  "B", "https://www.cfr.org/rss.xml"),                         # VERIFY
+    ("proj_synd",  "Project Syndicate (economics)", "B", "https://www.project-syndicate.org/rss"),               # VERIFY
+    ("voxeu",      "CEPR VoxEU",                    "B", "https://cepr.org/rss/voxeu.xml"),                       # VERIFY
+
+    # ---- Tier B : regional / local EM outlets (fill non-G10 coverage) ----
+    ("et_markets", "Economic Times Markets (IND)",  "B", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"), # VERIFY
+    ("livemint",   "LiveMint Markets (IND)",        "B", "https://www.livemint.com/rss/markets"),                # VERIFY
+    ("caixin",     "Caixin Global (CHN)",           "B", "https://www.caixinglobal.com/rss/feed.xml"),           # VERIFY
+    ("jakartapost","Jakarta Post (IDN)",            "B", "https://www.thejakartapost.com/rss"),                  # VERIFY
+    ("hurriyet",   "Hurriyet Daily News (TUR)",     "B", "https://www.hurriyetdailynews.com/rss"),               # VERIFY
+    ("moneyweb",   "Moneyweb (ZAF)",                "B", "https://www.moneyweb.co.za/feed/"),                    # VERIFY
+    ("ba_times",   "Buenos Aires Times (ARG)",      "B", "https://www.batimes.com.ar/feed"),                     # VERIFY
+
+    # ---- Tier C : "social" (Reddit has RSS; needs the UA patch) ----
+    # NOTE: X/Twitter KILLED public RSS in 2023 -- no reliable free feed exists.
+    ("r_economics","Reddit r/economics",            "C", "https://www.reddit.com/r/economics/.rss"),             # VERIFY (UA-gated)
+    ("r_em",       "Reddit r/emergingmarkets",      "C", "https://www.reddit.com/r/emergingmarkets/.rss"),       # VERIFY
+    ("r_geopol",   "Reddit r/geopolitics",          "C", "https://www.reddit.com/r/geopolitics/.rss"),           # VERIFY
 ]
 
 # -------------------------------------------------------------------
 # DOMAIN_TIER  ::  domain -> tier.  Promotes GDELT firehose by publisher.
+# v3.2: extended to cover the new feed publishers.
 # -------------------------------------------------------------------
 DOMAIN_TIER = {
     "reuters.com": "A", "ft.com": "A", "bloomberg.com": "A",
     "wsj.com": "A", "economist.com": "A", "apnews.com": "A",
-    "nytimes.com": "A", "cnbc.com": "A", "imf.org": "A",
+    "nytimes.com": "A", "cnbc.com": "B", "imf.org": "A",
     "worldbank.org": "A", "bis.org": "A", "ecb.europa.eu": "A",
     "federalreserve.gov": "A", "bankofengland.co.uk": "A",
     "bankofcanada.ca": "A", "boj.or.jp": "A", "bok.or.kr": "A",
@@ -733,17 +788,30 @@ DOMAIN_TIER = {
     "asia.nikkei.com": "B", "thediplomat.com": "B",
     "cfr.org": "B", "bruegel.org": "B", "project-syndicate.org": "B",
     "foreignpolicy.com": "B", "politico.com": "B", "cnn.com": "B",
+    # ---- v3.2 additions ----
+    "piie.com": "B", "cepr.org": "B",
+    "economictimes.indiatimes.com": "B", "livemint.com": "B",
+    "caixinglobal.com": "B", "thejakartapost.com": "B",
+    "hurriyetdailynews.com": "B", "moneyweb.co.za": "B",
+    "batimes.com.ar": "B", "reddit.com": "C",
 }
 
 # -------------------------------------------------------------------
-# FEED_ORIGIN_ISO  ::  source_id -> iso3 fallback for central-bank feeds.
-# v3: 6 EM central banks added alongside the enabled feeds above.
+# FEED_ORIGIN_ISO  ::  source_id -> iso3 fallback for feeds that are ABOUT one
+# country (central banks + single-country local outlets). Used when the headline
+# itself names no country, so the row still gets a desk instead of "(no desk)".
+# v3.2: local EM outlets added.
 # -------------------------------------------------------------------
 FEED_ORIGIN_ISO = {
     "fed": "USA", "ecb": "EMU", "boe": "GBR", "boj": "JPN", "boc": "CAN",
     "bok": "KOR",
     "rbi": "IND", "bcb": "BRA", "banxico": "MEX", "sarb": "ZAF",
     "cbrt": "TUR", "rba": "AUS",
+    # ---- v3.2: local single-country outlets ----
+    "et_markets": "IND", "livemint": "IND",
+    "caixin": "CHN", "jakartapost": "IDN", "hurriyet": "TUR",
+    "moneyweb": "ZAF", "ba_times": "ARG",
+    # (global/research feeds intentionally unset -- they're multi-country)
 }
 
 # -------------------------------------------------------------------
@@ -758,8 +826,9 @@ GDELT_EM_ONLY     = False
 GDELT_SLEEP_SEC   = 2.0
 
 # -------------------------------------------------------------------
-# NEWS_COUNTRY_ALIASES  ::  keyword -> iso3 (word-boundary matched in app.py;
-# entries <4 chars or on app.ALIAS_BLOCKLIST are inert -- use qualified forms).
+# NEWS_COUNTRY_ALIASES  ::  keyword -> iso3 (word-boundary matched in
+# news_ingest.py; entries <4 chars or on ALIAS_BLOCKLIST are inert -- use
+# qualified forms). MERGED on top of news_ingest.BASE_ALIASES.
 # -------------------------------------------------------------------
 NEWS_COUNTRY_ALIASES = {
     # --- United States ---
@@ -795,9 +864,8 @@ NEWS_COUNTRY_ALIASES = {
 
 # -------------------------------------------------------------------
 # NEWS_TOPICS  ::  topic key -> keyword list. Matched in news_ingest.topics_of.
-# ** KIV: topics_of still substring-matches, so [SHORT] keywords misfire
-# ("gold" in "Goldman"). Fix = word-boundary matching in news_ingest.py. The
-# DATA below is fine; the MATCHER needs changing, not these words. **
+# v2 matcher is WORD-BOUNDARY safe (the "gold"/"Goldman" bug is fixed), so this
+# DATA is fine as-is. A trailing "*" on a keyword means "prefix/stem match".
 # -------------------------------------------------------------------
 NEWS_TOPICS = {
     "central_bank":  ["rate", "rates", "central bank", "policy rate", "hike",
@@ -937,6 +1005,10 @@ def tier_of(iso3: str) -> str:
 #   POLICY_RATE / CPI_INDEX_M blanks for some countries -> test one IFS mask by
 #   hand: https://api.db.nomics.world/v22/series/IMF/IFS/M.TR.FPOLM_PA?observations=1
 #   Empty docs = wrong concept code for that country, not your code.
+#
+# NEWS FEEDS (v3.2): every # VERIFY url must be tested from your PC with the
+#   browser-UA patch. banxico dropped (no press RSS). X/Twitter has no public
+#   RSS since 2023. bis_* correct-but-firewalled at the office.
 #
 # CREDIT SPREADS (FRED): collector exists. If fetch_fred returns 0 with a
 #   ConnectionReset, that is the office firewall on fred.stlouisfed.org, not

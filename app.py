@@ -1836,8 +1836,6 @@ def _tab_news():
                     placeholder="headline / source / tag...",
                     className="emd-input emd-search",
                     style={"width": "200px"})),
-                html.Button("Refresh view", id="refresh-news", n_clicks=0,
-                            className="emd-btn emd-btn--ghost"),
             ], className="emd-controls"),
 
             # ---- ROW 2: PULL controls (fetch NEW headlines from the web) ----
@@ -1845,7 +1843,7 @@ def _tab_news():
                 html.Span("FETCH NEW HEADLINES:", className="emd-ctrl-label",
                           style={"color": P["navy1"], "fontWeight": 700}),
                 runner.news_since(),
-                runner.buttons_bar(["pull-news", "prune-news"]),
+                runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"])
             ], className="emd-controls",
                style={"borderTop": f"1px dashed {P['border']}",
                       "background": "#F7F8FB"}),
@@ -2111,18 +2109,47 @@ def serve_layout():
 app.layout = serve_layout
 
 
+
+# ===================================================================
+# CACHE INVALIDATION  ::  flush read-caches when the DB changes on disk.
+# In-app Pull buttons write to emdash.sqlite via a subprocess; without this,
+# the running app keeps serving stale cached rows until restart. WAL mode
+# lands new rows in the -wal sidecar first, so we stamp all three files.
+# ===================================================================
+_cache_stamp = {"v": None}
+
+
+def _db_stamp() -> float:
+    stamp = 0.0
+    for suf in ("", "-wal", "-shm"):
+        try:
+            stamp = max(stamp, (config.DB_PATH.parent /
+                                (config.DB_PATH.name + suf)).stat().st_mtime)
+        except OSError:
+            pass
+    return stamp
+
+
+def _maybe_flush_caches() -> None:
+    s = _db_stamp()
+    if _cache_stamp["v"] != s:
+        _series_cache.clear()
+        _market_cache.clear()
+        _global_cache.clear()
+        _cmdty_cache.clear()
+        _mrc_cache.clear()
+        _news_cache["df"] = None
+        _cache_stamp["v"] = s
+
 # ===================================================================
 # CALLBACKS
 # ===================================================================
 @app.callback(Output("news-board", "children"),
               Input("columns-by", "value"), Input("f-days", "value"),
               Input("f-desk", "value"), Input("f-tier", "value"),
-              Input("f-topic", "value"), Input("f-search", "value"),
-              Input("refresh-news", "n_clicks"))
-def _news(columns_by, days, desks, tiers, topics, search, n_clicks):
-    if n_clicks and n_clicks > (_news.__dict__.get("_last", 0)):
-        _news.__dict__["_last"] = n_clicks
-        load_news(force=True)
+              Input("f-topic", "value"), Input("f-search", "value"))
+def _news(columns_by, days, desks, tiers, topics, search):
+    _maybe_flush_caches()
     return news_board(columns_by, desks, tiers, topics, days, search)
 
 
@@ -2151,6 +2178,7 @@ def _news_more(n_clicks, data):
               Input("cmp-series", "value"))
 def _country(iso3, cmp_countries, indicator, transform, normalise, rng,
              cmp_series):
+    _maybe_flush_caches()
     isos = _as_iso_list([iso3] + list(cmp_countries or []))
     norm = bool(normalise)
     extra = list(cmp_series or [])
@@ -2192,6 +2220,7 @@ def _country(iso3, cmp_countries, indicator, transform, normalise, rng,
               Input("cmp-countries", "value"), Input("transform", "value"),
               Input("normalise", "value"), Input("grid-compare", "value"))
 def _grid(show, iso3, cmp_countries, transform, normalise, compare):
+    _maybe_flush_caches()
     if not show:
         return html.Div("Tick 'Show all-indicator grid' to render every "
                         "indicator at once (applies the Transform above).",
@@ -2240,6 +2269,7 @@ def _blank(msg="-", height=320):
               Input("es-xsort", "value"))
 def _eventstudy(mode, sig_iso, sig_ind, transform, rule, threshold,
                 target_value, xtarget, horizon, xsort):
+    _maybe_flush_caches()
     unit = unit_for(sig_ind, transform)
     sig_name = _signal_name(sig_iso, sig_ind)
     signal = _signal_series(sig_iso, sig_ind, transform)
@@ -2386,6 +2416,7 @@ def _es_export(n_clicks, sig_iso, sig_ind, transform, rule, threshold,
               Input("tabs", "value"), Input("mrc-days", "value"),
               Input("mrc-range", "value"))
 def _mrc(tab, days, rng):
+    _maybe_flush_caches()
     if tab != "mrc":
         return "", _blank("", 210), _blank("", 340), "", "", "", ""
 

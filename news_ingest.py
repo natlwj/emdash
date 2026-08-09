@@ -67,6 +67,11 @@ import os
 
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
+# Many feeds (Bruegel, Reddit, Cloudflare-fronted sites) return HTTP 403 to
+# feedparser's default "feedparser/6.x" User-Agent. Present a normal browser UA
+# so they serve us the feed. This alone revives several "dead" feeds.
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 
 # ===================================================================
 # COUNTRY ALIASES
@@ -374,12 +379,14 @@ def fetch_rss(limit: int | None = None, replace: bool = False) -> int:
 
     for source_id, name, tier, url in feeds:
         try:
-            parsed = feedparser.parse(url)
+            parsed = feedparser.parse(url, agent=BROWSER_UA)
         except Exception as e:
             print(f"    [RSS] {source_id}: FAILED ({e})")
             continue
+        status = getattr(parsed, "status", "?")
         if not parsed.entries:
-            print(f"    [RSS] {source_id}: no entries (check URL)")
+            print(f"    [RSS] {source_id}: no entries "
+                  f"(HTTP {status} -- check URL / UA / firewall)")
             continue
 
         rows = []
@@ -490,6 +497,9 @@ def run_news(only: str | None = None, limit: int | None = None,
         fetch_rss(limit=limit, replace=replace)
     if only in (None, "gdelt"):
         fetch_gdelt(limit=limit, replace=replace)
+    removed = core.dedupe_news()
+    if removed:
+        print(f"[news] de-duped {removed} rows sharing a URL")
     print("[news] table counts:", core.table_counts())
     print("[news] done.")
 

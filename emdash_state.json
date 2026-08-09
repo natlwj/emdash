@@ -1,7 +1,7 @@
 {
   "tab": "news",
-  "columns_by": "Desk",
-  "f_days": 100000,
+  "columns_by": "Topic",
+  "f_days": 1,
   "f_desk": [],
   "f_tier": [
     "A",
