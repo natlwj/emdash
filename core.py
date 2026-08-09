@@ -8,28 +8,27 @@ Public read API:
     get_global(), get_latest(), get_panel(),
     countries_df(), tags_df(), table_counts()
 
-NEW in v2 (for the Database Dash tab + dropdown grey-out):
-    coverage()               -> one row per (scope,key,field): n_rows,
-                                first_date, last_date, source. Powers the
-                                Data Availability tab.
-    has_coverage(iso3,field) -> bool; does this country+field have ANY data?
-                                Feeds the app's dropdown grey-out.
+For the SQLite Store tab:
+    coverage()             -> per (scope,key,field): n, first, last, source
+    news_coverage()        -> news totals / tiers / per-source / per-desk /
+                              tagged % / DEAD FEEDS
+    has_coverage(iso,fld)  -> bool (dropdown grey-out)
+    ingest_log_df()        -> per source: last_run, rows (freshness)
 
-"Do I already have this?" checks so ingest can skip filled data:
-    has_macro(iso3, indicator)
-    has_market(iso3, series)
-    has_commodity(name)
-    has_global(series)
+"Do I already have this?" checks (ingest skips filled data):
+    has_macro / has_market / has_commodity / has_global
 
-Write helper (used by ingest.py):
+Maintenance:
+    prune_news(days)       -> delete news older than N days (returns deleted)
+
+Write helper (ingest.py):
     write_rows(table, rows, replace=False)
-        replace=False -> INSERT OR IGNORE (keep what's there, add gaps)
-        replace=True  -> INSERT OR REPLACE (overwrite / refresh)
+        replace=False -> INSERT OR IGNORE ; replace=True -> INSERT OR REPLACE
 ===================================================================
 """
-
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 from typing import Sequence
 
@@ -125,9 +124,6 @@ def init_db(db_path=None) -> None:
     conn = get_conn(db_path)
     cur = conn.cursor()
     cur.executescript(_SCHEMA_SQL)
-    # COUNTRIES tuples are 5-wide (iso3,name,desk,dm_em,fx_ticker); the DB
-    # countries table matches. Parallel dicts (EQUITY_INDICES, etc.) are NOT
-    # stored here -- ingest reads them directly from config.
     cur.executemany(
         "INSERT OR REPLACE INTO countries (iso3,name,desk,dm_em,fx_ticker) "
         "VALUES (?,?,?,?,?)", config.COUNTRIES)
@@ -161,8 +157,6 @@ _TABLE_COLS = {
 
 def write_rows(table: str, rows: Sequence[tuple],
                replace: bool = False, db_path=None) -> int:
-    """Bulk insert. replace=False keeps existing rows (INSERT OR IGNORE);
-    replace=True overwrites them (INSERT OR REPLACE)."""
     if table not in _TABLE_COLS:
         raise ValueError(f"unknown table: {table}")
     rows = list(rows)
@@ -180,7 +174,7 @@ def write_rows(table: str, rows: Sequence[tuple],
 
 
 # -------------------------------------------------------------------
-# "DO I ALREADY HAVE THIS?"  -- lets ingest skip filled data
+# "DO I ALREADY HAVE THIS?"
 # -------------------------------------------------------------------
 def _exists(query: str, params: tuple, db_path=None) -> bool:
     conn = get_conn(db_path)
@@ -214,8 +208,6 @@ def has_global(series: str, db_path=None) -> bool:
 
 
 def log_ingest(source_id: str, rows: int, db_path=None) -> None:
-    """Record when a source last ran + how many rows (freshness stamp)."""
-    import datetime as dt
     conn = get_conn(db_path)
     conn.execute(
         "INSERT OR REPLACE INTO ingest_log (source_id,last_run,rows) "
@@ -334,57 +326,10 @@ def table_counts(db_path=None) -> dict:
     return out
 
 
-
-def news_coverage(db_path=None) -> dict:
-    """News stats for the SQLite Store tab: totals, tier/source breakdown,
-    date span, tagged vs untagged. Read-only."""
-    conn = get_conn(db_path)
-    try:
-        df = pd.read_sql("SELECT source_id, tier, iso3_tags, ts FROM news", conn)
-    except Exception:
-        df = pd.DataFrame()
-    conn.close()
-    if df.empty:
-        return {"total": 0, "by_tier": {}, "by_source": pd.DataFrame(),
-                "span": ("-", "-"), "tagged": 0, "untagged": 0}
-    by_tier = df["tier"].value_counts().to_dict()
-    by_source = (df.groupby("source_id")
-                   .agg(n=("ts", "size"), first=("ts", "min"), last=("ts", "max"))
-                   .reset_index().sort_values("n", ascending=False))
-    tagged = int((df["iso3_tags"].fillna("").str.len() > 0).sum())
-    return {"total": len(df), "by_tier": by_tier, "by_source": by_source,
-            "span": (str(df["ts"].min())[:10], str(df["ts"].max())[:10]),
-            "tagged": tagged, "untagged": len(df) - tagged}
-
-
-def prune_news(days: int, db_path=None) -> int:
-    """Delete news older than `days` days. Returns rows deleted. Keeps the DB
-    from growing forever once weekly pulls are scheduled. Call from
-    news_ingest, the weekly .bat, or a button."""
-    import datetime as _dt
-    cutoff = (_dt.datetime.now() - _dt.timedelta(days=int(days))).isoformat()
-    conn = get_conn(db_path)
-    cur = conn.execute("DELETE FROM news WHERE ts < ?", (cutoff,))
-    conn.commit()
-    n = cur.rowcount
-    conn.close()
-    return n
-
-
 # -------------------------------------------------------------------
-# COVERAGE  ::  what data exists, from when to when, from what source.
-# Powers the Database Dash tab and the dropdown grey-out.        [v2: NEW]
+# COVERAGE  (SQLite Store tab)
 # -------------------------------------------------------------------
 def coverage(db_path=None) -> pd.DataFrame:
-    """Data-availability map: one row per (scope, key, field).
-
-    Columns: scope, key, field, n, first, last, source.
-      scope='macro'     key=iso3  field=indicator
-      scope='market'    key=iso3  field=series  (FX / EQUITY / Y10 / FX_FRED..)
-      scope='commodity' key='-'   field=commodity
-      scope='global'    key='-'   field=series
-    Read-only, cheap GROUP BY. Cache it in the app (it changes only on ingest).
-    """
     conn = get_conn(db_path)
     queries = [
         ("SELECT iso3 AS key,'macro' AS scope,indicator AS field,"
@@ -410,20 +355,15 @@ def coverage(db_path=None) -> pd.DataFrame:
     cols = ["key", "scope", "field", "n", "first", "last", "source"]
     if not frames:
         return pd.DataFrame(columns=cols)
-    out = pd.concat(frames, ignore_index=True)
-    return out[cols]
+    return pd.concat(frames, ignore_index=True)[cols]
 
 
 def has_coverage(iso3: str, field: str, db_path=None) -> bool:
-    """Does (iso3, field) have ANY rows, in macro OR market? Feeds the app's
-    dropdown grey-out so empty options can be disabled per country."""
     return (has_macro(iso3, field, db_path)
             or has_market(iso3, field, db_path))
 
 
 def ingest_log_df(db_path=None) -> pd.DataFrame:
-    """Freshness table: per source, when it last ran and how many rows.
-    Shown in the Database Dash tab so you can see what is stale."""
     conn = get_conn(db_path)
     try:
         df = pd.read_sql("SELECT source_id, last_run, rows FROM ingest_log "
@@ -434,10 +374,67 @@ def ingest_log_df(db_path=None) -> pd.DataFrame:
     return df
 
 
+def news_coverage(db_path=None) -> dict:
+    """News stats for the SQLite Store tab: totals, tier + desk breakdown,
+    per-source spans, tagged %, and DEAD FEEDS (configured in RSS_FEEDS but
+    with zero rows -> likely bad URL / firewalled). Read-only."""
+    conn = get_conn(db_path)
+    try:
+        df = pd.read_sql("SELECT source_id, tier, iso3_tags, ts FROM news", conn)
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    if df.empty:
+        return {"total": 0, "by_tier": {}, "by_source": pd.DataFrame(),
+                "span": ("-", "-"), "tagged": 0, "untagged": 0,
+                "tagged_pct": 0.0, "by_desk": {}, "dead_feeds": []}
+
+    desk_by_iso = {i: d for i, n, d, *_ in config.COUNTRIES}
+    by_tier = df["tier"].value_counts().to_dict()
+    by_source = (df.groupby("source_id")
+                   .agg(n=("ts", "size"), first=("ts", "min"), last=("ts", "max"))
+                   .reset_index().sort_values("n", ascending=False))
+    tags = df["iso3_tags"].fillna("")
+    tagged = int((tags.str.len() > 0).sum())
+    untagged = len(df) - tagged
+
+    desk_counts: dict = {}
+    for s in tags:
+        seen = set()
+        for iso in [x for x in s.split(",") if x]:
+            d = desk_by_iso.get(iso)
+            if d and d not in seen:
+                seen.add(d)
+                desk_counts[d] = desk_counts.get(d, 0) + 1
+    desk_counts["(no desk)"] = untagged
+
+    present = set(df["source_id"].unique())
+    configured = [f[0] for f in getattr(config, "RSS_FEEDS", [])]
+    dead_feeds = [fid for fid in configured if fid not in present]
+
+    return {"total": len(df), "by_tier": by_tier, "by_source": by_source,
+            "span": (str(df["ts"].min())[:10], str(df["ts"].max())[:10]),
+            "tagged": tagged, "untagged": untagged,
+            "tagged_pct": round(100 * tagged / len(df), 1),
+            "by_desk": desk_counts, "dead_feeds": dead_feeds}
+
+
+# -------------------------------------------------------------------
+# MAINTENANCE
+# -------------------------------------------------------------------
+def prune_news(days: int, db_path=None) -> int:
+    """Delete news older than `days` days. Returns rows deleted."""
+    cutoff = (dt.datetime.now() - dt.timedelta(days=int(days))).isoformat()
+    conn = get_conn(db_path)
+    cur = conn.execute("DELETE FROM news WHERE ts < ?", (cutoff,))
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
+
+
 if __name__ == "__main__":
     init_db()
     print("[core] table counts:", table_counts())
-    cov = coverage()
-    print(f"[core] coverage rows: {len(cov)}")
-    if not cov.empty:
-        print(cov.head(12).to_string())
+    nc = news_coverage()
+    print(f"[core] news: {nc['total']} rows, tagged {nc['tagged_pct']}%")

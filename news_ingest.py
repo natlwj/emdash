@@ -341,12 +341,23 @@ def _parse_entry_time(entry) -> str:
     it naive (no tz suffix). The dashboard converts to local time for display
     using config.NEWS_TZ_OFFSET_HOURS. Do not "fix" this by writing local time
     into the DB -- storing UTC and converting at the edge is the correct shape.
+
+    GUARD: some feeds (boc, bis_press) publish malformed/future dates. Any
+    timestamp more than a day ahead of now is clamped to now, so a bad feed
+    can't park itself permanently at the top of the feed.
     """
+    now = dt.datetime.utcnow()
     for attr in ("published_parsed", "updated_parsed"):
         t = getattr(entry, attr, None)
         if t:
-            return dt.datetime(*t[:6]).isoformat(timespec="seconds")
-    return dt.datetime.utcnow().isoformat(timespec="seconds")
+            try:
+                parsed = dt.datetime(*t[:6])
+            except Exception:
+                continue
+            if parsed > now + dt.timedelta(days=1):
+                parsed = now                      # clamp future -> now
+            return parsed.isoformat(timespec="seconds")
+    return now.isoformat(timespec="seconds")
 
 
 def fetch_rss(limit: int | None = None, replace: bool = False) -> int:

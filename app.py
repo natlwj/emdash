@@ -901,7 +901,8 @@ def _news_card(row):
         top.append(html.Span(DESK_SHORT.get(d, d), className="emd-desk",
                              title=config.DESK_LABELS.get(d, d)))
     if row["iso3_tags"]:
-        top.append(html.Span(row["iso3_tags"], className="emd-flag"))
+        top.append(html.Span(row["iso3_tags"].replace(",", ", "),
+                             className="emd-flag"))
 
     children = [
         html.Div(top, className="emd-news-top"),
@@ -1801,14 +1802,15 @@ def _tab_news():
     return dcc.Tab(
         label="News Feed", value="news", className="emd-tab",
         selected_className="emd-tab--selected", children=[
+            # ---- ROW 1: DISPLAY controls (change what's shown) ----
             html.Div([
                 _filter("Columns by", dcc.Dropdown(
                     id="columns-by", value=sv("columns_by", "Country"),
                     clearable=False, style={"width": "150px"},
                     options=["Country", "Topic", "Source Tier", "Desk"])),
-                _filter("Since", dcc.Dropdown(
+                _filter("Show news from", dcc.Dropdown(
                     id="f-days", value=sv("f_days", 7), clearable=False,
-                    style={"width": "130px"},
+                    style={"width": "140px"},
                     options=[{"label": lbl, "value": v}
                              for lbl, v in DAY_OPTS])),
                 _filter("Desk", dcc.Dropdown(
@@ -1833,12 +1835,21 @@ def _tab_news():
                     value=sv("f_search", ""),
                     placeholder="headline / source / tag...",
                     className="emd-input emd-search",
-                    style={"width": "210px"})),
+                    style={"width": "200px"})),
                 html.Button("Refresh view", id="refresh-news", n_clicks=0,
                             className="emd-btn emd-btn--ghost"),
+            ], className="emd-controls"),
+
+            # ---- ROW 2: PULL controls (fetch NEW headlines from the web) ----
+            html.Div([
+                html.Span("FETCH NEW HEADLINES:", className="emd-ctrl-label",
+                          style={"color": P["navy1"], "fontWeight": 700}),
                 runner.news_since(),
                 runner.buttons_bar(["pull-news", "prune-news"]),
-            ], className="emd-controls"),
+            ], className="emd-controls",
+               style={"borderTop": f"1px dashed {P['border']}",
+                      "background": "#F7F8FB"}),
+
             dcc.Loading(html.Div(id="news-board"), type="default",
                         color=P["navy2"]),
         ])
@@ -2157,11 +2168,19 @@ def _country(iso3, cmp_countries, indicator, transform, normalise, rng,
     fxsub = f"{transform}" + ("  -  rebased to 100 at the common start date"
                              if norm else "")
     _, fxnote = fx_frame(isos[0]) if isos else (None, "LCY per USD")
+
+    # source line must list EVERY provider actually on the macro chart:
+    # the primary indicator, plus any compare-series overlaid on it.
+    macro_srcs = [source_for_indicator(indicator)]
+    for e in extra:
+        grp, _, k = e.partition(":")
+        macro_srcs.append(source_for_global(k) if grp == "glob" else SOURCE_YF)
+
     return (macro_fig(isos, indicator, transform, norm, rng, extra=extra),
             fx_fig(isos, transform, norm, rng),
             stat_tiles(iso3),
             f"{ind_label(indicator)} - {names}", sub,
-            source_line(source_for_indicator(indicator)),
+            source_line(macro_srcs),
             _prov_chip(transform, norm),
             f"FX ({fxnote}) - {names}", fxsub,
             source_line(SOURCE_YF),

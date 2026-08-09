@@ -1,30 +1,35 @@
 """
-EMDASH :: runner.py   (v4)
+EMDASH :: runner.py   (v5)
 ===================================================================
-BACKGROUND PULL RUNNER + clearly-named Pull buttons + a live status pill.
+BACKGROUND PULL RUNNER + real Pull buttons + a live status pill.
 
 Each button launches work as a BACKGROUND SUBPROCESS so the dashboard never
 freezes. A concurrency guard stops two jobs at once.
 
-v4 CHANGES
-  * NO MORE CONSTANT REFRESH. v3's status poll (dcc.Interval) ran every 2s
-    ALWAYS, redrawing the pills and making the page flicker. v4 keeps the
-    Interval DISABLED until a job is actually running, and switches it off
-    again the moment everything is idle. So when nothing is pulling, there is
-    zero polling and zero flicker.
-  * NICER BUTTONS. Each button is a small "island" (rounded card, subtle
-    shadow, gold left-accent) in the SMU palette, laid out in a neat row.
-  * RENAME + SHORTER DEFAULT. "Prune old news" -> "Clear old news (>Nd)", and
-    the default window is now 90 days (config.NEWS_PRUNE_DAYS).
-  * NEWS "SINCE" WINDOW unchanged: Pull News reads the news-since dropdown and
-    passes the chosen GDELT window via env var EMDASH_GDELT_TIMESPAN.
+v5 CHANGES
+  * REAL BUTTONS. v4 wrapped each button in a bordered "island" card, which
+    looked like an info panel rather than a clickable control. v5 renders each
+    as an actual filled button (SMU-palette accent, white text, rounded, subtle
+    shadow); the description is a hover tooltip, not visible body text.
+  * POLL NO LONGER CHURNS THE PAGE. v4 re-rendered the pills every 2s while a
+    job ran (constant _dash-update-component POSTs + visible flicker). v5's
+    poll returns no_update UNLESS the status actually changed, so the page is
+    static while "Running..." holds and only updates on Running->Done/Failed.
+    (The interval is still fully DISABLED when idle -> zero polling at rest.)
+  * NAME: the news depth control is "Pull window (GDELT)" -- clearly a PULL
+    setting, distinct from the News tab's "Show news from" DISPLAY filter.
 
 DUPLICATES: news PK is (ts,url) + INSERT OR IGNORE, so re-pulling only adds
 genuinely new rows -- pulling often is safe and cheap.
 
+BIG/SLOW PULLS: buttons capture subprocess output (no live progress). For a
+long macro/everything pull, prefer running it in the terminal directly, e.g.
+    python ingest.py --only worldbank dbnomics
+so you can watch per-country progress.
+
 API:
-    runner.buttons_bar(which)  -> styled button+status row
-    runner.news_since()        -> the "News window" dropdown (News tab)
+    runner.buttons_bar(which)  -> row of real buttons + status pills
+    runner.news_since()        -> the "Pull window (GDELT)" dropdown
     runner.status_store()      -> the dcc.Store + (disabled) dcc.Interval
     runner.register(app)       -> wires clicks + poll + auto enable/disable
 ===================================================================
@@ -37,7 +42,7 @@ import sys
 import threading
 import datetime as dt
 
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, no_update
 
 import config
 
@@ -62,13 +67,14 @@ JOBS = {
     "pull-macro": {
         "label": "Pull Macro",
         "script": "ingest.py", "args": ["--only", "worldbank", "dbnomics"],
-        "desc": "World Bank annual + IMF monthly macro.",
+        "desc": "World Bank annual + IMF monthly macro. Slow (105 countries) - "
+                "consider running in the terminal to see progress.",
         "accent": P["navy3"],
     },
     "pull-all": {
         "label": "Pull Everything",
         "script": "ingest.py", "args": [],
-        "desc": "Every collector: macro + markets. Can take minutes.",
+        "desc": "Every collector: macro + markets. Can take many minutes.",
         "accent": P["gold"],
     },
     "prune-news": {
@@ -86,6 +92,7 @@ SINCE_OPTS = [("Last 3 days", "3d"), ("Last week", "1w"),
 _lock = threading.Lock()
 _state: dict[str, dict] = {j: {"status": "idle"} for j in JOBS}
 _procs: dict[str, subprocess.Popen] = {}
+_last_snap = {"v": None}     # for the change-only poll
 
 
 def _now() -> str:
@@ -157,7 +164,7 @@ def _status_snapshot() -> dict:
 def _status_pill(job_id, s):
     st = s.get("status", "idle")
     if st == "running":
-        txt, col, bg = f"Running...", P["navy1"], "#EAF0F9"
+        txt, col, bg = "Running...", P["navy1"], "#EAF0F9"
     elif st == "done":
         txt = f"Done {s.get('finished','')} - {s.get('tail','')[:60]}"
         col, bg = P["good"], "#E4F0E6"
@@ -165,43 +172,41 @@ def _status_pill(job_id, s):
         txt = f"Failed {s.get('finished','')} - {s.get('tail','')[:60]}"
         col, bg = P["bad"], "#F7E4E1"
     else:
-        return html.Span()          # idle -> show nothing (clean)
+        return html.Span()      # idle -> blank
     return html.Span(txt, style={"color": col, "background": bg,
                                  "padding": "3px 9px", "borderRadius": "8px",
-                                 "fontSize": "11px", "marginTop": "6px",
-                                 "display": "inline-block",
-                                 "whiteSpace": "nowrap", "maxWidth": "260px",
+                                 "fontSize": "11px", "marginLeft": "8px",
+                                 "whiteSpace": "nowrap", "maxWidth": "300px",
                                  "overflow": "hidden",
-                                 "textOverflow": "ellipsis"})
+                                 "textOverflow": "ellipsis",
+                                 "verticalAlign": "middle"})
 
 
-def _button_island(jid):
+def _button(jid):
+    """A REAL filled button (not an info card)."""
     job = JOBS[jid]
+    accent = job.get("accent", P["navy2"])
     return html.Div([
-        html.Button("\u21bb  " + job["label"], id=f"btn-{jid}", n_clicks=0,
-                    title=job["desc"],
-                    style={"border": "none", "background": "transparent",
-                           "color": job.get("accent", P["navy1"]),
-                           "fontWeight": 700, "fontSize": "13px",
-                           "cursor": "pointer", "padding": "2px 2px",
-                           "fontFamily": config.FONTS["ui"]}),
-        html.Div(job["desc"], style={"fontSize": "10.5px",
-                                     "color": P["muted"], "marginTop": "2px"}),
-        html.Div(id=f"stat-{jid}"),
-    ], style={"background": P["card"], "border": f"1px solid {P['border']}",
-              "borderLeft": f"4px solid {job.get('accent', P['navy1'])}",
-              "borderRadius": "10px", "padding": "10px 14px",
-              "boxShadow": "0 1px 2px rgba(31,73,125,.06)",
-              "minWidth": "170px", "flex": "0 1 auto"})
+        html.Button(
+            "\u21bb  " + job["label"], id=f"btn-{jid}", n_clicks=0,
+            title=job["desc"],
+            style={"background": accent, "color": "#fff", "border": "none",
+                   "borderRadius": "8px", "padding": "8px 14px",
+                   "fontWeight": 700, "fontSize": "13px", "cursor": "pointer",
+                   "boxShadow": "0 1px 2px rgba(31,73,125,.18)",
+                   "fontFamily": config.FONTS["ui"]}),
+        html.Span(id=f"stat-{jid}"),
+    ], style={"display": "inline-flex", "alignItems": "center",
+              "margin": "2px 4px"})
 
 
 def buttons_bar(which=None):
     which = which or list(JOBS)
-    islands = [_button_island(jid) for jid in which if jid in JOBS]
-    return html.Div(islands, className="emd-runner",
-                    style={"display": "flex", "gap": "12px",
-                           "flexWrap": "wrap", "alignItems": "stretch",
-                           "padding": "4px 0"})
+    return html.Div([_button(jid) for jid in which if jid in JOBS],
+                    className="emd-runner",
+                    style={"display": "flex", "gap": "8px",
+                           "flexWrap": "wrap", "alignItems": "center",
+                           "padding": "2px 0"})
 
 
 def news_since():
@@ -209,16 +214,18 @@ def news_since():
     if default not in [v for _, v in SINCE_OPTS]:
         default = "3d"
     return html.Div([
-        html.Span("News window", className="emd-ctrl-label"),
+        html.Span("Pull window (GDELT)", className="emd-ctrl-label"),
         dcc.Dropdown(id="news-since", value=default, clearable=False,
                      style={"width": "150px"},
                      options=[{"label": l, "value": v} for l, v in SINCE_OPTS]),
     ], className="emd-ctrl-group",
-        title="How far back GDELT reaches when you click Pull News.")
+        title="How far back GDELT reaches WHEN YOU CLICK Pull News. This is a "
+              "PULL setting - it does not change what is displayed. Use "
+              "'Show news from' for that.")
 
 
 def status_store():
-    # Interval starts DISABLED -> no polling / no flicker when idle.
+    # interval starts DISABLED -> zero polling / zero flicker when idle.
     return html.Div([
         dcc.Store(id="runner-store"),
         dcc.Interval(id="runner-poll", interval=2000, n_intervals=0,
@@ -236,22 +243,29 @@ def register(app):
                       prevent_initial_call=True)
         def _go(n_clicks, *extra, _jid=jid, _uses=uses_since):
             if not n_clicks:
-                return _status_snapshot()
+                return no_update
             with _lock:
                 busy = _any_running()
             if busy:
-                return _status_snapshot()
+                return no_update
             since = extra[0] if (_uses and extra) else None
             _launch(_jid, since=since)
-            return _status_snapshot()
+            snap = _status_snapshot()
+            _last_snap["v"] = snap
+            return snap
 
-    # poll runs ONLY while enabled (see the disable callback below)
+    # poll: only push a new store value when the snapshot actually CHANGED,
+    # so a steady "Running..." does not churn the page every 2 seconds.
     @app.callback(Output("runner-store", "data"),
                   Input("runner-poll", "n_intervals"))
     def _poll(_n):
-        return _status_snapshot()
+        snap = _status_snapshot()
+        if snap == _last_snap["v"]:
+            return no_update
+        _last_snap["v"] = snap
+        return snap
 
-    # enable the Interval while any job runs; disable it (stop polling) when idle
+    # enable the interval while a job runs; disable (stop polling) when idle.
     @app.callback(Output("runner-poll", "disabled"),
                   Input("runner-store", "data"))
     def _toggle(_data):
@@ -272,10 +286,8 @@ def register(app):
 #   ... after server = app.server:   runner.register(app)
 #   ... in serve_layout() after dcc.Store(id="_persist_sink"):
 #         runner.status_store(),
-#   ... News tab: put these INSIDE the emd-controls row (not below the board):
-#         runner.news_since(),
-#         runner.buttons_bar(["pull-news", "prune-news"]),
-#   SQLite Store buttons render inside database_tab (imports runner itself).
+#   ... News tab -- see _tab_news layout in app.py (display row + pull row).
+#   SQLite Store buttons render inside database_tab (imports runner).
 #
 # Optional config: NEWS_PRUNE_DAYS = 90.
 # ===================================================================

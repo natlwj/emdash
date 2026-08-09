@@ -672,7 +672,7 @@ NEWS_TZ_OFFSET_HOURS = 8
 NEWS_TZ_LABEL = "SGT"
 NEWS_SHOW_TZ_BADGE = True
 
-SHOW_FAVICONS = False
+SHOW_FAVICONS = True
 FAVICON_URL = "https://icons.duckduckgo.com/ip3/{domain}.ico"
 
 # -------------------------------------------------------------------
