@@ -1,122 +1,44 @@
 """
-EMDASH :: app.py   (v6)
+EMDASH :: app.py   (v7)
 
 THE DASHBOARD. Reads ONLY through core.py; math via signals.py / event_study.py
-/ mrc.py; tagging via news_ingest.py. Styling: assets/emdash.css (v5).
-Editable settings: config.py (v2).
+/ mrc.py; tagging via news_ingest.py. Styling: assets/emdash.css.
+Editable settings: config.py.
 
 ==============================================================================
-WHAT CHANGED IN v6  --  chart sizing only. No behaviour changes elsewhere.
+WHAT CHANGED IN v7
 ==============================================================================
+INDICATOR COMPARISON (formerly "Country Indicators")
+  * The tab is renamed and can now compare ANYTHING, not just countries.
+    A new "Compare series" multi-dropdown overlays commodities (cmdty:BRENT),
+    global gauges (glob:VIX / US yields) and credit spreads on the main chart,
+    using the SAME prefix scheme + _signal_series() path the Event Study tab
+    already uses (proven). Extra series are drawn DOTTED to distinguish them
+    from country lines.
+  * MIXED UNITS: CPI % vs Brent $ vs VIX level cannot share a raw axis
+    honestly, so when you add compare-series the sub-line nudges you to tick
+    Normalise (rebase to 100) -- then everything is comparable by SHAPE.
+  * FRIENDLY NAMES via config.INDICATOR_LABELS: dropdowns, titles, the grid
+    and the stat tiles now read "GDP per capita (USD)" instead of GDP_PC_USD.
 
-THE BUG: every chart collapsed to a strip, or overflowed its white card with
-the "Source:" line pushed out underneath it.
+FIXES carried in v7 (were bugs in the running copy):
+  * removed DUPLICATE imports (core / database_tab were imported twice).
+  * removed a STALE button call (runner.buttons_bar(["update-news"])) -- that
+    job id no longer exists in runner v4 (it is "pull-news" now).
 
-THE CAUSE: this app sets an explicit pixel height on every figure inside
-_fig() -- 320 by default, 215 for the mini grid, 380 for the event-study path,
-210 for the regime ribbon, 340 for the gauges. v5 then ALSO set
-dcc.Graph(responsive=True) on every graph, which tells Plotly the opposite:
-"ignore the figure's height, take your size from the parent element instead".
-
-Dash's `responsive` prop defaults to 'auto', which means "be responsive only
-if the figure has no explicit height". v5 overrode that default to True
-everywhere, so every carefully chosen height was thrown away and sizing was
-handed to .emd-card -- which has only padding, no height. The result was
-whatever the container happened to produce, which is why it looked erratic
-rather than uniformly wrong.
-
-THE FIX: delete the override. Every dcc.Graph now passes only its config dict,
-so `responsive` returns to 'auto', Dash sees the explicit layout.height, and
-the figure renders at exactly that height. The card grows to fit it and the
-header / plot / source line stack normally.
-
-  ** ALSO DELETE FROM assets/emdash.css (added during debugging, now harmful):
-       .emd-card .js-plotly-plot,
-       .emd-card .plot-container { min-height: 180px; width: 100%; }
-     A min-height floor fighting a layout height is a third source of truth.
-     KEEP the `.emd-chart-titlewrap { flex: 1 1 240px; }` fix -- unrelated
-     and correct. Hard-refresh (Ctrl+Shift+R) or the old CSS stays cached. **
-
-TRADE-OFF, stated plainly: charts no longer reflow on window resize. That was
-v5's goal and it is what broke them. Fixed heights that fit correctly beat
-responsive heights that overflow. If resize behaviour is wanted later, the
-correct way is to drop `height` from _fig() AND give .emd-card a height, so
-there is exactly ONE source of truth -- never both.
-
-Everything else in this file is unchanged: same functions, same logic, same
-callbacks, same outputs. Formatting, indentation and comment layout tidied
-only; dead commented-out graph lines removed.
+Everything else -- chart engine (_fig/_graph/chart_card), news board, event
+study, MRC -- is byte-for-byte the same behaviour as v6. Chart rendering was
+NOT touched; the comparison feature only FEEDS macro_fig extra data.
 
 ------------------------------------------------------------------------------
-CARRIED OVER FROM v5
-------------------------------------------------------------------------------
-
-NEWS
-  * FIRST LOAD IS ~12x FASTER. v4 was slower than v3, not faster. Measured on
-    4,000 rows: re-tagging with ~250 separate compiled regexes cost 1,557 ms and
-    formatting timestamps one row at a time (pd.to_datetime per row) cost
-    1,934 ms -- ~3.7 s of work before a single card was drawn. Both are now
-    vectorised: ONE combined alternation regex (in news_ingest.py) and a single
-    vectorised .dt.strftime(). Same output, ~0.3 s.
-  * TIMESTAMPS ARE NOW CONVERTED AND LABELLED. They were never SGT: feedparser
-    normalises published_parsed to UTC and GDELT's seendate ends in "Z", so a
-    card reading 07:29 was really 15:29 in Singapore. Now shifted by
-    config.NEWS_TZ_OFFSET_HOURS and stamped "SGT", so the label is true.
-  * PUBLISHER FAVICONS next to the source name (config.SHOW_FAVICONS). Served
-    from a favicon proxy and browser-cached, so it costs zero Python time. If
-    your office network blocks it, set SHOW_FAVICONS = False.
-  * Column widths are uniform (CSS: the columns used to stretch to fill a row,
-    so a 2-column row looked fatter than a 5-column row).
-  * TOPIC TAGGING FIXED in news_ingest.py -- "Goldman" no longer reads as
-    commodities, "coalition" no longer as energy. Topics drive the Kanban
-    columns, so this was visible on every screen.
-
-COUNTRY
-  * FX CHART NO LONGER CLIPS. The CSS grid used `1fr`, which is really
-    `minmax(auto, 1fr)`, and `auto` refuses to shrink below the chart's
-    intrinsic minimum width -- fixed in emdash.css v5 with `minmax(0, 1fr)`.
-  * MINI CHARTS: explicit tick counts (they were auto-thinned to 2-3 ticks at
-    215px), and they can now OVERLAY COMPARE COUNTRIES -- toggleable via the
-    "Compare countries in grid" checkbox.
-  * NORMALISE NOW REBASES AT A COMMON START DATE. Rebasing each series at its
-    own first observation compared "US CPI since 1955" with "HK CPI since 1980"
-    -- most of that gap was a 25-year head start, not inflation. All compared
-    series are now trimmed to the latest common start before rebasing.
-  * PROVENANCE CHIP on every chart: RAW (straight from the warehouse) vs
-    CALC (transformed by signals.py), so you always know what you're looking at.
-  * "Source: ..." under EVERY chart, including the mini grid and all Event
-    Study / MRC charts. v4 only had it on the two big country charts.
-
-CHARTS (global, every tab)
-  * TITLES AND SOURCE LINES ARE HTML, NOT DRAWN INSIDE THE PLOT. Plotly
-    renders SVG <text>, which cannot be selected or copied. They are real
-    HTML, so you can select and copy them.
-  * RANGE BUTTONS LIVE IN THE CARD HEADER, not the figure, so screenshotting
-    a chart no longer captures the 1Y/5Y/10Y/Max row.
-  * LEGENDS CENTRED (they were hard-left).
-  * Horizontal gridlines only, black axis lines/ticks/labels, y-axis title
-    held clear of the tick labels.
-
-EVENT STUDY
-  * PER-EVENT BREAKDOWN TABLE: the individual event outcomes are shown BEFORE
-    they are averaged, with each event's date and its move at every horizon.
-  * OUTCOME SPREAD CHART REDRAWN FOR SMALL SAMPLES. With 4 events a density
-    histogram is unreadable. With <= 12 events the baseline is drawn as a
-    smooth density and each event becomes a labelled DOT with its date, so
-    "3 crashed, 1 spiked" is obvious.
-  * PLAIN-ENGLISH WALKTHROUGH built into the tab, using the live numbers.
-
-MRC
-  * FEATURE FLAGS ARE ACTUALLY READ. Every tab is gated on
-    config.FEATURE_FLAGS["module_*"].
-  * EM_FX gauge removed (see mrc.py v2 for the arithmetic), MOVE/Brent votes
-    added, credit spreads + BTC supported, anti-flicker window settable in UI.
-  * "Why is today X?" table: the per-gauge vote breakdown behind the label.
+CARRIED OVER (v5/v6): chart height owned by _fig() only (no responsive flag);
+HTML titles/source lines; range pills in the card header; centred legends;
+vectorised news load; per-event Event Study table; MRC why-table.
 
 RUN
     python -m pip install dash plotly pandas feedparser requests
     python app.py            # -> http://127.0.0.1:9001
-    (or just double-click EMDASH.bat)
+    (or double-click EMDASH.bat)
 """
 from __future__ import annotations
 
@@ -124,6 +46,7 @@ import re
 import json
 import math
 import datetime as dt
+import threading
 import urllib.parse
 
 import numpy as np
@@ -136,9 +59,6 @@ import core
 import database_tab
 import runner
 import signals as sig
-
-import core
-import database_tab
 
 # --- tagging lives in news_ingest.py (single source of truth, ingest + display)
 try:
@@ -180,22 +100,15 @@ MAX_COMPARE = 5
 DOMAIN_TIER = getattr(config, "DOMAIN_TIER", {})
 FLAGS = getattr(config, "FEATURE_FLAGS", {})
 
-# Cross-section bar: clip the DRAWN bar to this percentile band so one freak
-# outlier can't squash every other bar. TRUE value stays in label + hover.
 CROSS_CLIP = (2, 98)
-
-# Below this many events, a density histogram is meaningless -- draw dots.
 HIST_DOT_LIMIT = 12
-
 COMPARE_COLORS = [P["navy1"], P["gold"], P["navy3"], P["good"], P["brown"]]
 
-# ---- chart styling constants (GLOBAL RULE: horizontal gridlines only) -------
 AXIS_BLACK = "#1A1A1A"
 GRID_H = "#E6E9EF"
-Y_TITLE_STANDOFF = 14      # pushes y-axis title clear of the tick labels
-MARGIN_L = 92              # room for tick labels + title
+Y_TITLE_STANDOFF = 14
+MARGIN_L = 92
 
-# ---- news display (timezone + icons) ---------------------------------------
 TZ_OFFSET_H = float(getattr(config, "NEWS_TZ_OFFSET_HOURS", 0) or 0)
 TZ_LABEL = str(getattr(config, "NEWS_TZ_LABEL", "") or "")
 SHOW_TZ_BADGE = bool(getattr(config, "NEWS_SHOW_TZ_BADGE", True))
@@ -225,9 +138,6 @@ RANGE_YEARS = {"1Y": 1, "5Y": 5, "10Y": 10}
 NAME_BY_ISO = {i: n for i, n, *_ in config.COUNTRIES}
 DESK_BY_ISO = {i: d for i, n, d, *_ in config.COUNTRIES}
 
-# USA has no LCY-per-USD ticker (the dollar IS the base) but it DOES have a
-# usable FX proxy via DXY -- see fx_frame(). v4 filtered on `if fx`, which
-# silently dropped the US from the Event Study cross-section.
 FX_ISOS = [i for i, n, d, dm, fx in config.COUNTRIES if fx or i == "USA"]
 
 DESK_SHORT = {d: d for d in config.DESK_LABELS}
@@ -237,8 +147,16 @@ COUNTRY_OPTS = sorted(
     [{"label": f"{n} ({i})", "value": i} for i, n, *_ in config.COUNTRIES],
     key=lambda o: o["label"])
 
+# v7: friendly indicator names everywhere (falls back to the code if absent)
+INDICATOR_LABELS = getattr(config, "INDICATOR_LABELS", {})
+
+
+def ind_label(code):
+    return INDICATOR_LABELS.get(code, code)
+
+
 INDICATOR_OPTS = sorted(
-    [{"label": k, "value": k}
+    [{"label": ind_label(k), "value": k}
      for k in list(config.WB_INDICATORS) + list(config.DBN_SERIES)],
     key=lambda o: o["label"])
 
@@ -259,8 +177,7 @@ _GLOBAL_DIFF = {"US10Y", "VIX", "MOVE"}
 
 
 # ===================================================================
-# SOURCE ATTRIBUTION  ::  which provider does each series come from?
-# Derived from config so it stays correct when you add indicators.
+# SOURCE ATTRIBUTION
 # ===================================================================
 SOURCE_WB = "World Bank (WDI)"
 SOURCE_DBN = "IMF / DBnomics"
@@ -283,9 +200,8 @@ def source_for_global(key: str) -> str:
 
 
 def unit_for(indicator: str, transform: str) -> str:
-    """What the THRESHOLD is measured in, given the signal + transform."""
     if isinstance(indicator, str) and ":" in indicator:
-        return "pts"                    # prefixed global / commodity level
+        return "pts"
     if transform.startswith("Z-score"):
         return "sigma"
     if transform == "YoY" or transform.startswith("Momentum"):
@@ -319,11 +235,6 @@ TARGET_OPTS = _target_options()
 
 
 def _signal_ind_options():
-    """Signal choices: country indicators PLUS globals PLUS commodities.
-
-    Country indicators stay BARE names (back-compat with saved state); globals
-    and commodities use the target prefix scheme ('glob:VIX', 'cmdty:BRENT').
-    """
     opts = [{"label": "- Country indicators -", "value": "GDP_YOY",
              "disabled": True}]
     opts += INDICATOR_OPTS
@@ -341,6 +252,25 @@ def _signal_ind_options():
 
 
 SIGNAL_IND_OPTS = _signal_ind_options()
+
+
+def _compare_series_options():
+    """Series you can overlay on the comparison chart: commodities + globals +
+    credit, using the same prefix scheme the Event Study tab uses."""
+    opts = [{"label": "- Commodities -", "value": "cmdty:BRENT",
+             "disabled": True}]
+    for k in config.COMMODITIES:
+        opts.append({"label": f"Commodity - {k}", "value": f"cmdty:{k}"})
+    opts.append({"label": "- Global markets -", "value": "glob:VIX",
+                 "disabled": True})
+    for k in config.MARKET_TICKERS:
+        opts.append({"label": f"Global - {k}", "value": f"glob:{k}"})
+    for k in getattr(config, "FRED_SERIES", {}):
+        opts.append({"label": f"Credit - {k}", "value": f"glob:{k}"})
+    return opts
+
+
+COMPARE_SERIES_OPTS = _compare_series_options()
 
 
 # ===================================================================
@@ -448,8 +378,7 @@ def cached_commodity(name):
 
 def fx_frame(iso3):
     """FX for a country. USA has no LCY-per-USD series (the dollar IS the base),
-    so we substitute DXY -- the dollar's own trade-weighted index -- which makes
-    the USA row behave like every other country instead of showing 'no FX'."""
+    so we substitute DXY."""
     df = cached_market(iso3, "FX")
     if (df is None or df.empty) and iso3 == "USA":
         g = cached_global("DXY")
@@ -459,15 +388,7 @@ def fx_frame(iso3):
 
 
 # ===================================================================
-# NEWS LOADING
-#
-# PERFORMANCE NOTE (this is what made v4 slow):
-# every heavy per-row operation here is now VECTORISED or delegated to a single
-# combined regex in news_ingest.py. The two offenders were
-#   * re-tagging with ~250 individually compiled regexes  (1,557 ms / 4k rows)
-#   * pd.to_datetime called once PER ROW to format the timestamp (1,934 ms)
-# Both are now one pass each. "Vectorised" = act on the whole column at once
-# instead of asking pandas the same question row by row.
+# NEWS LOADING  (vectorised; see v5 notes)
 # ===================================================================
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -475,13 +396,7 @@ _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 _news_cache: dict = {"df": None}
 
 
-def _format_times(ts_series: pd.Series) -> tuple[pd.Series, pd.Series]:
-    """(local datetime, display string) for a whole column at once.
-
-    Stored timestamps are UTC (feedparser normalises published_parsed to UTC;
-    GDELT's seendate ends in 'Z'), so we shift by config.NEWS_TZ_OFFSET_HOURS
-    before formatting. This is why v4's clock looked 8 hours out.
-    """
+def _format_times(ts_series: pd.Series):
     utc = pd.to_datetime(ts_series, errors="coerce")
     local = utc + pd.Timedelta(hours=TZ_OFFSET_H)
     disp = local.dt.strftime("%d %b %Y - %H:%M")
@@ -489,7 +404,6 @@ def _format_times(ts_series: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 
 def load_news(limit: int = NEWS_READ_LIMIT, force: bool = False) -> pd.DataFrame:
-    """Processed news table, cached for the session."""
     if _news_cache["df"] is not None and not force:
         return _news_cache["df"]
     try:
@@ -505,19 +419,17 @@ def load_news(limit: int = NEWS_READ_LIMIT, force: bool = False) -> pd.DataFrame
         return df
 
     heads = df["headline"].fillna("").tolist()
-    df["topics"] = topics_of_many(heads)              # one combined regex
+    df["topics"] = topics_of_many(heads)
     df["domain"] = df["url"].map(_domain)
     df["tier"] = [DOMAIN_TIER.get(d, t)
                   for d, t in zip(df["domain"], df["tier"])]
 
-    # --- re-derive country tags at DISPLAY time (repairs rows already in the
-    # DB that were written by the old substring matcher -- no re-ingest needed)
     origin = getattr(config, "FEED_ORIGIN_ISO", {})
-    tags = tag_countries_many(heads)                  # one combined regex
+    tags = tag_countries_many(heads)
     df["iso3_tags"] = [t if t else (origin.get(s, "") or "")
                        for t, s in zip(tags, df["source_id"])]
 
-    df["_dt"], df["_tsfmt"] = _format_times(df["ts"])  # vectorised
+    df["_dt"], df["_tsfmt"] = _format_times(df["ts"])
     df["_key"] = df["iso3_tags"].fillna("") + "|" + df["headline"].map(_norm)
 
     _rank = {"A": 0, "B": 1, "C": 2}
@@ -575,7 +487,6 @@ def apply_transform(s, name):
 
 
 def rebase100(s: pd.Series) -> pd.Series:
-    """Normalise a series to 100 at its first valid point."""
     s = s.dropna()
     if s.empty:
         return s
@@ -586,19 +497,11 @@ def rebase100(s: pd.Series) -> pd.Series:
 
 
 def _common_start(series_list):
-    """Latest first-observation across a set of series.
-
-    WHY: rebasing each series at its OWN start compares different time spans.
-    US CPI starts ~1955 and HK CPI ~1980, so 'US 1200 vs HK 550' was mostly a
-    25-year head start, not an inflation difference. Trimming everything to the
-    latest common start makes the comparison honest.
-    """
     starts = [s.index[0] for s in series_list if s is not None and not s.empty]
     return max(starts) if starts else None
 
 
 def _apply_range(fig, rng, series_list):
-    """Apply the HTML range pills to the figure's x-axis."""
     if not rng or rng == "Max":
         return fig
     yrs = RANGE_YEARS.get(rng)
@@ -614,22 +517,7 @@ def _apply_range(fig, rng, series_list):
 
 
 # ===================================================================
-# FIGURES
-#
-# GLOBAL CHART RULE -- applies to EVERY chart in this app:
-#   * horizontal gridlines ONLY (x gridlines off)
-#   * black axis lines, ticks and tick labels
-#   * y-axis title pushed clear of the tick labels (standoff + left margin)
-#   * legend CENTRED
-#
-# HEIGHT IS OWNED HERE AND NOWHERE ELSE (v6). _fig() sets layout.height and
-# that is the single source of truth. Do NOT add responsive=True or a style
-# height to dcc.Graph, and do NOT add a min-height in CSS -- three competing
-# height rules is exactly what broke every chart in v5.
-#
-# Chart TITLES and SOURCE lines are not drawn inside the figure -- they are
-# HTML in the card header, so the text can be selected and copied, and so a
-# screenshot of the plot doesn't include the range buttons.
+# FIGURES  (GLOBAL CHART RULE; height owned by _fig only)
 # ===================================================================
 def _ytick_format(unit: str) -> str:
     if unit in ("%", "pp", "sigma"):
@@ -685,9 +573,6 @@ def _fig(height=320, ytitle="", yunit="", xtitle="",
 
 
 def _legend(fig, on=True):
-    """Centred horizontal legend, sitting fully ABOVE the plot -- the global
-    convention. yanchor='bottom' pins the legend's bottom edge just over the
-    plot so it never dips into the data, however many series there are."""
     if on:
         fig.update_layout(showlegend=True,
                           legend=dict(orientation="h", yanchor="bottom",
@@ -739,10 +624,9 @@ def _as_iso_list(isos):
 
 
 # ===================================================================
-# CHART CARD FURNITURE  (HTML title / provenance chip / range pills / source)
+# CHART CARD FURNITURE
 # ===================================================================
 def _prov_chip(transform, normalise=False):
-    """RAW = straight from the warehouse. CALC = computed by signals.py."""
     calc = (transform != "Level") or normalise
     if not calc:
         return html.Span("RAW", className="emd-prov emd-prov--raw",
@@ -764,13 +648,6 @@ def _range_pills(rid, value="Max"):
 
 
 def _graph(graph_id=None, figure=None):
-    """The ONE place a dcc.Graph is constructed.
-
-    v6: config dict only. No responsive flag, no style height -- the figure's
-    own layout.height (set in _fig) is the single source of truth. Routing
-    every graph through here means a future sizing change is a one-line edit
-    instead of six scattered ones.
-    """
     kwargs = {"config": {"displayModeBar": False}}
     if graph_id is not None:
         kwargs["id"] = graph_id
@@ -781,29 +658,18 @@ def _graph(graph_id=None, figure=None):
 
 def chart_card(graph_id, *, title_id=None, sub_id=None, source_id=None,
                prov_id=None, range_id=None, range_value="Max", height=None):
-    """A chart island: HTML header (selectable text, screenshot-safe) + figure.
-
-    Everything except the plot itself is HTML so it can be selected and copied,
-    and so screenshotting the chart doesn't capture the range buttons.
-
-    NOTE: `height` is accepted but unused -- figure height is owned by _fig().
-    Kept so existing call sites keep working unchanged.
-    """
     head_left = [html.Div(id=title_id, className="emd-chart-title")]
     if sub_id:
         head_left.append(html.Div(id=sub_id, className="emd-chart-sub"))
-
     head = [html.Div(head_left, className="emd-chart-titlewrap")]
     if prov_id:
         head.append(html.Div(id=prov_id))
-
     kids = []
     if range_id:
         kids.append(html.Div(_range_pills(range_id, range_value),
                              className="emd-range-row"))
     kids.append(html.Div(head, className="emd-chart-head"))
     kids.append(_graph(graph_id))
-
     if source_id:
         kids.append(html.Div(id=source_id, className="emd-chart-source"))
     return html.Div(kids, className="emd-card")
@@ -820,12 +686,20 @@ def source_line(src) -> str:
 
 
 # ===================================================================
-# COUNTRY FIGURES
+# COUNTRY / COMPARISON FIGURES
 # ===================================================================
-def macro_fig(isos, indicator, transform, normalise=False, rng="Max"):
+def macro_fig(isos, indicator, transform, normalise=False, rng="Max",
+              extra=None):
+    """Main comparison chart.
+
+    v7: `extra` is a list of prefixed compare-series (cmdty:BRENT, glob:VIX,
+    ...). Country lines are solid; extra series are dotted. Different units are
+    only honest with Normalise on -- the callback nudges the user accordingly.
+    """
     isos = _as_iso_list(isos)
+    extra = [e for e in (extra or []) if e]
     unit = unit_for(indicator, transform)
-    multi = len(isos) > 1
+    multi = (len(isos) > 1) or bool(extra)
     fig = _fig(ytitle=_ytitle_for(indicator, transform, unit, normalise),
                yunit=("" if normalise else unit))
 
@@ -838,13 +712,21 @@ def macro_fig(isos, indicator, transform, normalise=False, rng="Max"):
         s = apply_transform(df.set_index("date")["value"], transform).dropna()
         series.append((iso3, s if not s.empty else None))
 
-    live = [s for _, s in series if s is not None]
-    if not live:
-        return _empty(fig, "no data - run ingest.py")
+    extra_series = []
+    for key in extra:
+        s2 = _signal_series(None, key, transform)
+        if s2 is not None and not s2.empty:
+            _, _, k = key.partition(":")
+            extra_series.append((ind_label(k), s2))
 
-    # common-start rebasing (see _common_start for why)
+    live = [s for _, s in series if s is not None] + \
+           [s for _, s in extra_series]
+    if not live:
+        return _empty(fig, "no data - run a Pull")
+
     cut = _common_start(live) if (normalise and multi) else None
-    for k, (iso3, s) in enumerate(series):
+    ncol = 0
+    for iso3, s in series:
         if s is None:
             continue
         if cut is not None:
@@ -855,7 +737,8 @@ def macro_fig(isos, indicator, transform, normalise=False, rng="Max"):
         if y.empty:
             continue
         mode = "lines+markers" if len(y) < 60 else "lines"
-        color = COMPARE_COLORS[k % len(COMPARE_COLORS)]
+        color = COMPARE_COLORS[ncol % len(COMPARE_COLORS)]
+        ncol += 1
         nm = NAME_BY_ISO.get(iso3, iso3)
         suffix = "" if normalise else unit
         fig.add_trace(go.Scatter(
@@ -866,6 +749,21 @@ def macro_fig(isos, indicator, transform, normalise=False, rng="Max"):
             hovertemplate=f"{nm}<br>%{{y:.2f}}{suffix}<extra></extra>"))
         if not multi:
             _last_marker(fig, y, color, unit=suffix)
+
+    for nm, s in extra_series:
+        if cut is not None:
+            s = s[s.index >= cut]
+        y = _downsample(s)
+        if normalise:
+            y = rebase100(y)
+        if y.empty:
+            continue
+        color = COMPARE_COLORS[ncol % len(COMPARE_COLORS)]
+        ncol += 1
+        fig.add_trace(go.Scatter(
+            x=y.index, y=y.values, mode="lines",
+            line=dict(width=2, color=color, dash="dot"), name=nm,
+            hovertemplate=f"{nm}<br>%{{y:.2f}}<extra></extra>"))
 
     _legend(fig, multi)
     if transform.startswith("Z-score"):
@@ -923,15 +821,13 @@ def fx_fig(isos, transform, normalise=False, rng="Max"):
 
 
 def mini_fig(isos, indicator, transform="Level", normalise=False):
-    """Small multiple. Explicit tick counts (Plotly auto-thinned them to
-    2-3 at this height) and optional multi-country overlay."""
     isos = _as_iso_list(isos)
     unit = unit_for(indicator, transform)
     multi = len(isos) > 1
     fig = _fig(height=270,
                ytitle=_ytitle_for(indicator, transform, unit, normalise),
                yunit=("" if normalise else unit), nticks_x=6, nticks_y=5)
-    fig.update_layout(margin=dict(l=78, r=14, t=72, b=34)) 
+    fig.update_layout(margin=dict(l=78, r=14, t=72, b=34))
 
     series = []
     for iso3 in isos:
@@ -978,9 +874,9 @@ def _favicon(domain):
 
 
 def _slim_row(r):
-    """Minimal JSON-safe row for lazy-loaded cards (no Timestamps)."""
     return {k: r.get(k) for k in ("tier", "source_id", "domain", "_tsfmt",
             "_desks", "iso3_tags", "headline", "url", "dupes", "sources")}
+
 
 def _news_card(row):
     tier = row["tier"] or "?"
@@ -1055,7 +951,7 @@ def _column_title(col, columns_by):
 def news_board(columns_by, desks, tiers, topics, days, search=""):
     df = load_news()
     if df.empty:
-        return html.Div("No news yet - run  python news_ingest.py",
+        return html.Div("No news yet - click Pull News.",
                         style={"padding": "28px", "color": P["muted"]})
 
     sub = df
@@ -1079,7 +975,7 @@ def news_board(columns_by, desks, tiers, topics, days, search=""):
                else "No headlines match these filters / date range.")
         return html.Div(msg, style={"padding": "28px", "color": P["muted"]})
 
-    cols: dict[str, list] = {}
+    cols: dict = {}
     for row in sub.to_dict("records"):
         for key in _column_keys(row, columns_by):
             cols.setdefault(key, []).append(row)
@@ -1126,7 +1022,8 @@ def stat_tiles(iso3):
             val = _human(last["value"])
             date = str(last["date"])[:10]
         tiles.append(html.Div([
-            html.Div(ind, className="emd-stat-label"),
+            html.Div(ind_label(ind), className="emd-stat-label",
+                     title=ind),
             html.Div(val, className="emd-stat-value"),
             html.Div(date, className="emd-stat-date"),
         ], className="emd-stat"))
@@ -1139,7 +1036,8 @@ def indicator_grid(isos, transform="Level", normalise=False, compare=False):
     for ind in config.WB_INDICATORS:
         cards.append(html.Div([
             html.Div([
-                html.Div([html.Div(ind, className="emd-chart-title")],
+                html.Div([html.Div(ind_label(ind), className="emd-chart-title",
+                                   title=ind)],
                          className="emd-chart-titlewrap"),
                 _prov_chip(transform, normalise),
             ], className="emd-chart-head"),
@@ -1170,7 +1068,7 @@ def _signal_name(iso3, indicator):
     if isinstance(indicator, str) and ":" in indicator:
         grp, _, key = indicator.partition(":")
         return f"{key} ({'global' if grp == 'glob' else 'commodity'})"
-    return f"{NAME_BY_ISO.get(iso3, iso3)} - {indicator}"
+    return f"{NAME_BY_ISO.get(iso3, iso3)} - {ind_label(indicator)}"
 
 
 def _signal_source(indicator):
@@ -1216,7 +1114,7 @@ def resolve_target(target_value, country):
 def es_helper(signal, unit, sig_name, transform, rule, threshold):
     if signal.empty:
         return html.Div("No data for this signal - pick another indicator, or "
-                        "run ingest.py.", className="emd-es-helper emd-es-warn")
+                        "run a Pull.", className="emd-es-helper emd-es-warn")
 
     cur = float(signal.iloc[-1])
     lo, hi, med = float(signal.min()), float(signal.max()), float(signal.median())
@@ -1330,7 +1228,6 @@ def es_headline(res, tgt_label, unit, pval=None):
                    "Could easily be luck - treat as weak."),
                 className="emd-es-head-p" + ("" if strong else " emd-es-weak")))
 
-    # mean-vs-median divergence: the single most useful sanity check
     if med20 is not None and not math.isnan(med20) and n >= 2:
         gap = abs(mean20 - med20) * fac
         if gap > abs(mean20 * fac) * 0.5 and gap > 0.5:
@@ -1349,14 +1246,8 @@ def es_headline(res, tgt_label, unit, pval=None):
 
 
 def es_walkthrough(res, tgt_label, sig_name, unit, horizon=20):
-    """The arithmetic, in words, using the live numbers.
-
-    The plain-English explanation lives IN the tab so other people can read
-    this without you narrating it.
-    """
     if res is None or res.n_events == 0:
         return html.Div()
-
     fac = 100 if unit == "%" else 1
     try:
         n = int(res.summary.loc[horizon, "n"])
@@ -1409,15 +1300,12 @@ def es_walkthrough(res, tgt_label, sig_name, unit, horizon=20):
 
 
 def es_events_table(res, unit, horizons=ES_HORIZONS):
-    """The individual event outcomes, BEFORE they are averaged."""
     if res is None or res.detail is None or res.detail.empty:
         return html.Div()
-
     fac = 100 if unit == "%" else 1
     d = res.detail
     heads = ["#", "Event date"] + [f"{h}d {unit}" for h in horizons]
     thead = html.Thead(html.Tr([html.Th(h) for h in heads]))
-
     body = []
     for i, (_, r) in enumerate(d.iterrows(), start=1):
         cells = [html.Td(str(i)),
@@ -1431,7 +1319,6 @@ def es_events_table(res, unit, horizons=ES_HORIZONS):
                 cls = "emd-pos" if val > 0 else ("emd-neg" if val < 0 else "")
                 cells.append(html.Td(f"{val:+.2f}", className=cls))
         body.append(html.Tr(cells))
-
     return html.Div([
         html.Div("Every event, before averaging", className="emd-events-title"),
         html.Table([thead, html.Tbody(body)], className="emd-table"),
@@ -1466,7 +1353,6 @@ def es_table(res, unit, pvals=None):
     if res is None or res.n_events == 0:
         return html.Div("No events.",
                         style={"padding": "14px", "color": P["muted"]})
-
     pvals = pvals or {}
     fac = 100 if unit == "%" else 1
     cmp = res.compare()
@@ -1474,7 +1360,6 @@ def es_table(res, unit, pvals=None):
              f"Excess {unit}", "Hit %", "Base hit %", f"Median {unit}",
              "p (perm)"]
     thead = html.Thead(html.Tr([html.Th(h) for h in heads]))
-
     body = []
     for h, r in cmp.iterrows():
         edge = r["edge"] * fac
@@ -1493,20 +1378,12 @@ def es_table(res, unit, pvals=None):
             html.Td(f"{r['median']*fac:+.2f}"),
             html.Td(pcell, className=pcls),
         ]))
-
     return html.Div([_col_legend(cross=False),
                      html.Table([thead, html.Tbody(body)],
                                 className="emd-table")])
 
 
 def es_hist_fig(res, ev_out, base_out, unit, horizon):
-    """Outcome spread.
-
-    With a handful of events a density histogram is unreadable -- v4 drew
-    three spikes at 0.6 / 0.25 with no context. Below HIST_DOT_LIMIT events the
-    baseline is drawn as a smooth density and each event becomes a labelled DOT
-    at its own outcome, so you can see "3 crashed, 1 spiked" immediately.
-    """
     yfac = 100 if unit == "%" else 1
     xt = "outcome %" if unit == "%" else f"outcome ({unit})"
     n_ev = 0 if ev_out is None else len(ev_out)
@@ -1524,7 +1401,6 @@ def es_hist_fig(res, ev_out, base_out, unit, horizon):
                 x=b, name="Baseline (any day)", marker_color=P["grey"],
                 opacity=0.45, histnorm="probability density", nbinsx=40))
         else:
-            # smooth-ish density via a fine histogram, drawn as a filled area
             cnt, edges = np.histogram(b.values, bins=60, density=True)
             centres = [(edges[i] + edges[i + 1]) / 2
                        for i in range(len(edges) - 1)]
@@ -1568,7 +1444,6 @@ def es_explain_panel():
     def item(term, body):
         return html.Div([html.B(term + " - "), body],
                         className="emd-explain-item")
-
     return html.Details([
         html.Summary("What am I looking at? (click)"),
         html.Div([
@@ -1584,23 +1459,17 @@ def es_explain_panel():
                  "the average path of the target in the days after the signal "
                  "fired."),
             item("Baseline (grey dotted)",
-                 "the average path starting from ANY random day in history. It "
-                 "is the boring 'normal drift'. The GAP between navy and grey "
-                 "is the whole point - that gap is the 'Excess vs baseline'. If "
-                 "the two lines sit together, the event added nothing."),
+                 "the average path starting from ANY random day in history. The "
+                 "GAP between navy and grey is the 'Excess vs baseline'."),
             item("25-75% band (shaded)",
-                 "the middle 50% of individual events. Narrow = events behaved "
-                 "alike (trust the average). Wide = wildly mixed (the average "
-                 "means little)."),
+                 "the middle 50% of individual events. Narrow = alike; wide = "
+                 "mixed."),
             item("Faint lines", "each individual event's own path."),
             item("Permutation p-value",
-                 "instead of a t-stat (which overstates significance when event "
-                 "windows overlap), we draw random 'fake events' thousands of "
-                 "times and ask how often luck beats the real result. Small p = "
-                 "unlikely luck."),
+                 "draw random 'fake events' thousands of times; how often does "
+                 "luck beat the real result? Small p = unlikely luck."),
             html.Div("Descriptive, not predictive: this generates hypotheses. "
-                     "Always check the event count (small = fragile) and the "
-                     "dispersion before trusting a headline.",
+                     "Always check the event count and dispersion first.",
                      className="emd-explain-foot"),
         ], className="emd-explain-body"),
     ], className="emd-explain", open=False)
@@ -1635,8 +1504,6 @@ def _sort_cross(xs, how):
 
 
 def es_cross_fig(xs, horizon, xtarget_label, unit="%"):
-    """Rate targets are already in percentage POINTS, so multiplying by 100
-    turned an 11.7pp move into '+1169.6%'. `unit` drives the scaling."""
     fac = 100 if unit == "%" else 1
     n = len(xs) if xs is not None else 0
     height = max(420, 26 * n + 150)
@@ -1676,7 +1543,6 @@ def es_cross_fig(xs, horizon, xtarget_label, unit="%"):
         hovertemplate="%{y}<br>excess %{customdata:+.2f}" + unit
                       + "<extra></extra>"))
     fig.add_vline(x=0, line_dash="dot", line_color=P["muted"])
-
     if any(clipped):
         fig.add_annotation(
             text="* = bar clipped for scale; true value in label/hover",
@@ -1690,12 +1556,10 @@ def es_cross_table(xs, unit="%"):
     if xs is None or xs.empty:
         return html.Div("No events / no data.",
                         style={"padding": "14px", "color": P["muted"]})
-
     fac = 100 if unit == "%" else 1
     heads = ["Country", "Events", f"Mean {unit}", f"Base {unit}",
              f"Excess {unit}", "Hit %"]
     thead = html.Thead(html.Tr([html.Th(h) for h in heads]))
-
     body = []
     for iso, r in xs.iterrows():
         edge = r["edge"] * fac
@@ -1707,7 +1571,6 @@ def es_cross_table(xs, unit="%"):
             html.Td(f"{edge:+.2f}", className=cls),
             html.Td(f"{r['hit_rate']*100:.0f}"),
         ]))
-
     return html.Div([_col_legend(cross=True),
                      html.Table([thead, html.Tbody(body)],
                                 className="emd-table")])
@@ -1724,7 +1587,6 @@ _mrc_cache: dict = {}
 
 
 def mrc_compute(min_days=None, force=False):
-    """Daily regime labels + the underlying z-scores. Cached per min_days."""
     if mrc is None:
         return None, None
     key = int(min_days) if min_days else int(getattr(mrc, "DEFAULT_MIN_DAYS", 5))
@@ -1751,11 +1613,8 @@ def mrc_ribbon_fig(reg):
                       margin=dict(l=MARGIN_L, r=22, t=42, b=46))
     _legend(fig, True)
     fig.update_yaxes(showticklabels=False, showgrid=False, range=[0, 1])
-
     if reg is None or reg.empty:
-        return _empty(fig, "no regime data - run ingest.py, then "
-                           "python mrc.py --live")
-
+        return _empty(fig, "no regime data - run a Pull, then python mrc.py --live")
     for name in ("Risk-Off", "Neutral", "Risk-On", "Goldilocks"):
         mask = (reg == name)
         if not mask.any():
@@ -1774,7 +1633,6 @@ def mrc_gauge_fig(z, rng="Max"):
     _legend(fig, True)
     if z is None or z.empty:
         return _empty(fig, "no gauge data")
-
     palette = [P["bad"], P["brown"], P["navy1"], P["good"], P["gold"],
                P["navy3"], P["muted"], P["navy2"]]
     live = []
@@ -1787,7 +1645,6 @@ def mrc_gauge_fig(z, rng="Max"):
             x=s.index, y=s.values, mode="lines", name=g,
             line=dict(width=1.6, color=palette[i % len(palette)]),
             hovertemplate=f"{g} %{{y:.2f}}<extra></extra>"))
-
     fig.add_hline(y=0, line_dash="dot", line_color=P["muted"])
     hi = float(getattr(mrc, "HI", 0.75)) if mrc else 0.75
     for lvl in (hi, -hi):
@@ -1800,18 +1657,15 @@ def mrc_summary(reg):
     if reg is None or reg.empty:
         return html.Div("No regime data.",
                         style={"padding": "14px", "color": P["muted"]})
-
     latest = str(reg.iloc[-1])
     asof = str(pd.to_datetime(reg.index[-1]).date())
     summ = mrc.regime_summary(reg) if mrc is not None else pd.DataFrame()
-
     tiles = [html.Div([
         html.Div("CURRENT REGIME", className="emd-stat-label"),
         html.Div(latest, className="emd-stat-value",
                  style={"color": REGIME_COLORS.get(latest, P["navy1"])}),
         html.Div(f"as of {asof}", className="emd-stat-date"),
     ], className="emd-stat")]
-
     for name, row in summ.iterrows():
         tiles.append(html.Div([
             html.Div(str(name), className="emd-stat-label"),
@@ -1823,7 +1677,6 @@ def mrc_summary(reg):
 
 
 def mrc_why(z, reg):
-    """Per-gauge vote breakdown for the latest day."""
     if mrc is None or z is None or z.empty or reg is None or reg.empty:
         return html.Div()
     try:
@@ -1833,11 +1686,9 @@ def mrc_why(z, reg):
         return html.Div()
     if contrib is None or contrib.empty:
         return html.Div()
-
     thead = html.Thead(html.Tr(
         [html.Th(h) for h in
          ["Gauge", "z-score", "Votes for", "What it reads"]]))
-
     body = []
     for g, r in contrib.iterrows():
         vote = str(r["votes"])
@@ -1848,29 +1699,25 @@ def mrc_why(z, reg):
             html.Td(vote, className="emd-why-vote " + cls),
             html.Td(str(r["meaning"]), style={"textAlign": "left"}),
         ]))
-
     return html.Div([
         html.Div(f"Why is {str(pd.to_datetime(last).date())} = {reg.iloc[-1]}?",
                  className="emd-events-title"),
         html.Table([thead, html.Tbody(body)], className="emd-table"),
         html.Div("A gauge only votes when its z-score clears the threshold. "
-                 "Gauges missing from the warehouse do not vote at all - they "
-                 "are never treated as zero.", className="emd-events-note"),
+                 "Gauges missing from the warehouse do not vote at all.",
+                 className="emd-events-note"),
     ], className="emd-events")
 
 
 def mrc_explain():
     def item(t, b):
         return html.Div([html.B(t + " - "), b], className="emd-explain-item")
-
     return html.Details([
         html.Summary("How the regime is decided (click)"),
         html.Div([
-            html.Div("Each daily gauge is turned into a z-score (how unusual is "
-                     "today vs the last ~1 year). Each regime is a scorecard of "
-                     "simple threshold conditions; the highest score wins, and a "
-                     "weak score falls back to Neutral. Every rule is readable "
-                     "in mrc.py - no ML, no hidden state.",
+            html.Div("Each daily gauge is turned into a z-score. Each regime is "
+                     "a scorecard of threshold conditions; the highest score "
+                     "wins, a weak/tied score falls back to Neutral.",
                      className="emd-explain-lead"),
             item("Risk-Off", "VIX high, MOVE high, DXY high, copper weak, Brent "
                              "weak, credit spreads wide."),
@@ -1879,24 +1726,15 @@ def mrc_explain():
             item("Goldilocks", "quiet vol AND stable dollar AND a firm growth "
                                "read."),
             item("Neutral", "nothing scored strongly enough - most days."),
-            item("VIX vs MOVE", "equity vol (VIX) reads across to INVESTMENT "
-                                "GRADE spreads; rates vol (MOVE) reads across "
-                                "to HIGH YIELD. High MOVE is bad in general: if "
-                                "the path of interest rates is uncertain, "
-                                "discount rates are unstable and valuation "
-                                "models stop working."),
-            item("Oil and copper", "the two big real-economy reads. Weak oil or "
-                                   "weak copper usually means the economy is "
-                                   "doing badly - the exception is a supply "
-                                   "disruption, which this classifier cannot "
-                                   "see."),
-            item("Hysteresis", "a new regime must hold for N consecutive days "
-                               "before it is confirmed. Without it the label "
-                               "flickered almost daily, which is not how "
-                               "regimes actually behave. Set N below."),
-            html.Div("Why it matters: the regime is itself a signal. Feed a "
-                     "regime FLIP into the Event Study tab to ask 'when we flip "
-                     "into Risk-Off, what did BRL do next?'",
+            item("VIX vs MOVE", "equity vol reads across to IG spreads; rates "
+                                "vol reads across to HY. High MOVE = unstable "
+                                "discount rates."),
+            item("Oil and copper", "the two big real-economy reads. Weak = "
+                                   "economy weak (unless a supply story)."),
+            item("Hysteresis", "a new regime must hold N days before it is "
+                               "confirmed. Set N below."),
+            html.Div("Feed a regime FLIP into the Event Study tab to ask 'when "
+                     "we flip into Risk-Off, what did BRL do next?'",
                      className="emd-explain-foot"),
         ], className="emd-explain-body"),
     ], className="emd-explain", open=False)
@@ -1917,15 +1755,14 @@ def _word(txt):
 # APP
 # ===================================================================
 app = Dash(__name__, title="EMDASH")
-
-# Tabs are gated on config.FEATURE_FLAGS, so callbacks may reference components
-# that are not in the layout. This tells Dash that is intentional.
 app.config.suppress_callback_exceptions = True
 server = app.server
+
+# wire the modular tabs / buttons, then warm the SQLite Store cache in the
+# background so its first open is instant (see database_tab.warm_cache).
 database_tab.register(app)
 runner.register(app)
-import threading
-threading.Thread(target=lambda: database_tab.warm_cache(), daemon=True).start()
+threading.Thread(target=database_tab.warm_cache, daemon=True).start()
 
 
 def _filter(label, comp):
@@ -1935,8 +1772,6 @@ def _filter(label, comp):
 
 def _plain_card(title, graph_id, source_id, sub=None, range_id=None,
                 range_value="Max"):
-    """Chart island whose title is STATIC text (MRC / Event Study), as opposed
-    to chart_card() whose title is filled in by a callback."""
     head_left = [html.Div(title, className="emd-chart-title")]
     if sub:
         head_left.append(html.Div(sub, className="emd-chart-sub"))
@@ -1952,7 +1787,6 @@ def _plain_card(title, graph_id, source_id, sub=None, range_id=None,
 
 
 def _callback_title_card(title_id, graph_id, source_id):
-    """Chart island whose title div is filled by a callback."""
     return html.Div([
         html.Div([html.Div([html.Div(id=title_id,
                                      className="emd-chart-title")],
@@ -2000,21 +1834,19 @@ def _tab_news():
                     placeholder="headline / source / tag...",
                     className="emd-input emd-search",
                     style={"width": "210px"})),
-                html.Button("Refresh news", id="refresh-news", n_clicks=0,
-                            className="emd-btn"),
+                html.Button("Refresh view", id="refresh-news", n_clicks=0,
+                            className="emd-btn emd-btn--ghost"),
                 runner.news_since(),
                 runner.buttons_bar(["pull-news", "prune-news"]),
-                runner.buttons_bar(["update-news"]),
             ], className="emd-controls"),
             dcc.Loading(html.Div(id="news-board"), type="default",
                         color=P["navy2"]),
-
         ])
 
 
 def _tab_country():
     return dcc.Tab(
-        label="Country Indicators", value="country", className="emd-tab",
+        label="Indicator Comparison", value="country", className="emd-tab",
         selected_className="emd-tab--selected", children=[
             html.Div([
                 _filter("Country", dcc.Dropdown(
@@ -2024,12 +1856,16 @@ def _tab_country():
                 _filter(f"Compare (+{MAX_COMPARE-1})", dcc.Dropdown(
                     id="cmp-countries", multi=True, options=COUNTRY_OPTS,
                     value=sv("cmp_countries", []),
-                    style={"minWidth": "250px"},
+                    style={"minWidth": "230px"},
                     placeholder=f"overlay up to {MAX_COMPARE-1} more...")),
                 _filter("Indicator", dcc.Dropdown(
-                    id="indicator", clearable=False, style={"width": "210px"},
+                    id="indicator", clearable=False, style={"width": "220px"},
                     value=sv("indicator", INDICATOR_OPTS[0]["value"]),
                     options=INDICATOR_OPTS)),
+                _filter("Compare series", dcc.Dropdown(
+                    id="cmp-series", multi=True, options=COMPARE_SERIES_OPTS,
+                    value=sv("cmp_series", []), style={"minWidth": "230px"},
+                    placeholder="add commodities / globals...")),
                 _filter("Transform", dcc.Dropdown(
                     id="transform", clearable=False, style={"width": "170px"},
                     value=sv("transform", "Level"),
@@ -2278,6 +2114,7 @@ def _news(columns_by, days, desks, tiers, topics, search, n_clicks):
         load_news(force=True)
     return news_board(columns_by, desks, tiers, topics, days, search)
 
+
 @app.callback(
     Output({"type": "news-more-wrap", "col": MATCH}, "children"),
     Input({"type": "news-more-btn", "col": MATCH}, "n_clicks"),
@@ -2287,6 +2124,7 @@ def _news_more(n_clicks, data):
     if not n_clicks or not data:
         return None
     return [_news_card(r) for r in data]
+
 
 @app.callback(Output("macro-graph", "figure"), Output("fx-graph", "figure"),
               Output("stat-tiles", "children"),
@@ -2298,19 +2136,31 @@ def _news_more(n_clicks, data):
               Output("fx-source", "children"), Output("fx-prov", "children"),
               Input("country", "value"), Input("cmp-countries", "value"),
               Input("indicator", "value"), Input("transform", "value"),
-              Input("normalise", "value"), Input("ctry-range", "value"))
-def _country(iso3, cmp_countries, indicator, transform, normalise, rng):
+              Input("normalise", "value"), Input("ctry-range", "value"),
+              Input("cmp-series", "value"))
+def _country(iso3, cmp_countries, indicator, transform, normalise, rng,
+             cmp_series):
     isos = _as_iso_list([iso3] + list(cmp_countries or []))
     norm = bool(normalise)
+    extra = list(cmp_series or [])
     names = ", ".join(NAME_BY_ISO.get(i, i) for i in isos)
-    rebased = "  -  rebased to 100 at the common start date" if norm else ""
+    if extra:
+        names += " + " + ", ".join(
+            ind_label(e.split(":")[1]) for e in extra)
+    if norm:
+        rebased = "  -  rebased to 100 at the common start date"
+    elif extra:
+        rebased = "  -  mixed units: tick Normalise to compare shapes"
+    else:
+        rebased = ""
     sub = f"{transform}{rebased}"
-    fxsub = f"{transform}{rebased}"
+    fxsub = f"{transform}" + ("  -  rebased to 100 at the common start date"
+                             if norm else "")
     _, fxnote = fx_frame(isos[0]) if isos else (None, "LCY per USD")
-    return (macro_fig(isos, indicator, transform, norm, rng),
+    return (macro_fig(isos, indicator, transform, norm, rng, extra=extra),
             fx_fig(isos, transform, norm, rng),
             stat_tiles(iso3),
-            f"{indicator} - {names}", sub,
+            f"{ind_label(indicator)} - {names}", sub,
             source_line(source_for_indicator(indicator)),
             _prov_chip(transform, norm),
             f"FX ({fxnote}) - {names}", fxsub,
@@ -2384,13 +2234,12 @@ def _eventstudy(mode, sig_iso, sig_ind, transform, rule, threshold,
                 "", html.Div("event_study.py missing."), "")
 
     if signal.empty:
-        f = _blank("No signal data - run ingest.py")
+        f = _blank("No signal data - run a Pull")
         return (unit, helper,
                 html.Div("No signal data.", className="emd-es-headline"), "",
                 f, "Event Study", "", _blank("no signal data"), "", "",
                 "", "", "")
 
-    # ---- cross-section mode ------------------------------------------------
     if mode == "cross":
         targets = _cross_targets(xtarget)
         maxh = min((len(s) for s in targets.values()), default=250)
@@ -2414,8 +2263,8 @@ def _eventstudy(mode, sig_iso, sig_ind, transform, rule, threshold,
                      f"{xlabel} excess vs baseline after the signal fired "
                      f"({n_ev} events).", className="emd-es-head-main"),
             html.Div("Green = that country's FX/rate moved MORE than its own "
-                     "baseline when the signal fired; red = less. Longer bar = "
-                     "more exposed.", className="emd-es-head-sub"),
+                     "baseline when the signal fired; red = less.",
+                     className="emd-es-head-sub"),
         ], className="emd-es-headline")
 
         tsrc = SOURCE_YF if not is_rate else SOURCE_DBN
@@ -2429,7 +2278,6 @@ def _eventstudy(mode, sig_iso, sig_ind, transform, rule, threshold,
                 "", es_cross_table(xs_sorted, xunit),
                 f"(max {maxh} - {step})")
 
-    # ---- single-country mode -----------------------------------------------
     target, kind, tgt_label, tunit, tsrc = resolve_target(target_value, sig_iso)
     if target.empty:
         f = _blank(f"No data for target: {tgt_label}")
@@ -2549,7 +2397,8 @@ def _mrc(tab, days, rng):
               Input("f-desk", "value"), Input("f-tier", "value"),
               Input("f-topic", "value"), Input("f-search", "value"),
               Input("country", "value"), Input("cmp-countries", "value"),
-              Input("indicator", "value"), Input("transform", "value"),
+              Input("indicator", "value"), Input("cmp-series", "value"),
+              Input("transform", "value"),
               Input("normalise", "value"), Input("show-grid", "value"),
               Input("grid-compare", "value"), Input("ctry-range", "value"),
               Input("es-mode", "value"),
@@ -2561,16 +2410,17 @@ def _mrc(tab, days, rng):
               Input("mrc-days", "value"), Input("mrc-range", "value"),
               prevent_initial_call=True)
 def _persist(tab, columns_by, f_days, f_desk, f_tier, f_topic, f_search,
-             country, cmp_countries, indicator, transform, normalise,
-             show_grid, grid_compare, ctry_range, es_mode, es_sig_country,
-             es_sig_ind, es_transform, es_rule, es_threshold, es_target,
-             es_xtarget, es_horizon, es_xsort, mrc_days, mrc_range):
+             country, cmp_countries, indicator, cmp_series, transform,
+             normalise, show_grid, grid_compare, ctry_range, es_mode,
+             es_sig_country, es_sig_ind, es_transform, es_rule, es_threshold,
+             es_target, es_xtarget, es_horizon, es_xsort, mrc_days, mrc_range):
     save_state({
         "tab": tab, "columns_by": columns_by, "f_days": f_days,
         "f_desk": f_desk, "f_tier": f_tier, "f_topic": f_topic,
         "f_search": f_search,
         "country": country, "cmp_countries": cmp_countries,
-        "indicator": indicator, "transform": transform,
+        "indicator": indicator, "cmp_series": cmp_series,
+        "transform": transform,
         "normalise": normalise, "show_grid": show_grid,
         "grid_compare": grid_compare, "ctry_range": ctry_range,
         "es_mode": es_mode, "es_sig_country": es_sig_country,

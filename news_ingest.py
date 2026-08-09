@@ -62,6 +62,9 @@ import requests
 import config
 import core
 
+import os
+
+
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
@@ -418,7 +421,6 @@ def _gdelt_seendate_to_iso(seendate: str) -> str:
 
 
 def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
-    import os
     timespan = os.getenv("EMDASH_GDELT_TIMESPAN") or config.GDELT_TIMESPAN
     if not config.GDELT_ENABLED:
         print("[news] GDELT disabled in config")
@@ -430,14 +432,14 @@ def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
         countries = countries[:limit]
 
     print(f"[news] GDELT -- {len(countries)} countries "
-          f"(timespan={config.GDELT_TIMESPAN}, tier={config.GDELT_TIER})")
+          f"(timespan={timespan}, tier={config.GDELT_TIER})")
     total = 0
 
     for iso3, name, *_ in countries:
         q = f'"{name}"'
         if config.GDELT_LANG:
             q += f" sourcelang:{config.GDELT_LANG}"
-        articles = _gdelt_query(q, config.GDELT_MAXRECORDS, config.GDELT_TIMESPAN)
+        articles = _gdelt_query(q, config.GDELT_MAXRECORDS, timespan)
 
         rows = []
         for a in articles:

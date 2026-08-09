@@ -1,6 +1,6 @@
 {
-  "tab": "database",
-  "columns_by": "Country",
+  "tab": "country",
+  "columns_by": "Desk",
   "f_days": 100000,
   "f_desk": [],
   "f_tier": [
@@ -12,22 +12,24 @@
   "f_search": "",
   "country": "USA",
   "cmp_countries": [
-    "AUS",
-    "EMU",
-    "IND",
-    "IDN",
-    "CHL"
+    "AUS"
   ],
-  "indicator": "CPI_INDEX_M",
+  "indicator": "GDP_YOY",
+  "cmp_series": [
+    "cmdty:WTI",
+    "cmdty:GOLD"
+  ],
   "transform": "Level",
-  "normalise": [],
+  "normalise": [
+    "on"
+  ],
   "show_grid": [
     "on"
   ],
   "grid_compare": [
     "on"
   ],
-  "ctry_range": "Max",
+  "ctry_range": "10Y",
   "es_mode": "cross",
   "es_sig_country": "USA",
   "es_sig_ind": "POLICY_RATE",
