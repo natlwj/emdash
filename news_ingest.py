@@ -418,6 +418,8 @@ def _gdelt_seendate_to_iso(seendate: str) -> str:
 
 
 def fetch_gdelt(limit: int | None = None, replace: bool = False) -> int:
+    import os
+    timespan = os.getenv("EMDASH_GDELT_TIMESPAN") or config.GDELT_TIMESPAN
     if not config.GDELT_ENABLED:
         print("[news] GDELT disabled in config")
         return 0

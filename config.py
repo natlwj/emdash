@@ -416,6 +416,31 @@ SOURCES = [
     ("seed",        "Seed (Bloomberg exports)",         "market",    "A", "static"),
 ]
 
+
+INDICATOR_LABELS = {
+    "GDP_YOY": "GDP growth (% YoY)",
+    "CPI_YOY": "Inflation (CPI % YoY)",
+    "CURR_ACC_GDP": "Current account (% of GDP)",
+    "GOV_DEBT_GDP": "Govt debt (% of GDP)",   # yes — it's the ratio
+    "UNEMPLOYMENT": "Unemployment (%)",
+    "EXPORTS_GDP": "Exports (% of GDP)",
+    "IMPORTS_GDP": "Imports (% of GDP)",
+    "FDI_GDP": "FDI (% of GDP)",
+    "RESERVES_USD": "FX reserves (USD)",
+    "GDP_PC_USD": "GDP per capita (USD)",
+    "GROSS_SAVINGS": "Gross savings (% of GDP)",
+    "BROAD_MONEY": "Broad money / M2 (% of GDP)",
+    "POP_TOTAL": "Population (total)",
+    "POLICY_RATE": "Policy rate (%)",
+    "CPI_INDEX_M": "CPI index (monthly)",
+    "FX_RATE_M": "FX rate (monthly)",
+    "RESERVES_M": "FX reserves (monthly)",
+    "EXPORTS_M": "Exports (monthly, USD)",
+    "IMPORTS_M": "Imports (monthly, USD)",
+    "IP_INDEX_M": "Industrial production (monthly)",
+    "M2_M": "Broad money M2 (monthly)",
+}
+
 # -------------------------------------------------------------------
 # WORLD BANK INDICATORS  ::  friendly name -> World Bank API code.
 # Annual by nature (most are computed once a year). ingest loops these.

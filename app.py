@@ -1924,8 +1924,8 @@ app.config.suppress_callback_exceptions = True
 server = app.server
 database_tab.register(app)
 runner.register(app)
-
-database_tab.register(app)
+import threading
+threading.Thread(target=lambda: database_tab.warm_cache(), daemon=True).start()
 
 
 def _filter(label, comp):
@@ -2002,10 +2002,13 @@ def _tab_news():
                     style={"width": "210px"})),
                 html.Button("Refresh news", id="refresh-news", n_clicks=0,
                             className="emd-btn"),
+                runner.news_since(),
+                runner.buttons_bar(["pull-news", "prune-news"]),
                 runner.buttons_bar(["update-news"]),
             ], className="emd-controls"),
             dcc.Loading(html.Div(id="news-board"), type="default",
                         color=P["navy2"]),
+
         ])
 
 
