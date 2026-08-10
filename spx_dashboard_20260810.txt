@@ -1,0 +1,78 @@
+############################################################
+ACCOUNT & DISCIPLINE  -- READ BEFORE ANYTHING ELSE
+############################################################
+- Source: spx_account.json
+- Account value: $9,000   (peak $23,000)
+- Drawdown from peak: 60.9%  ->  STATE: RED
+  * RED: size down / stop. RED (>30%) = NO trading for 7 days.
+- Weekly P&L: $0   (weekly stop at $-600)
+  * $600 of weekly loss budget left before the stop.
+- Open positions: 0/5 total  (CCS 0/2, PCS 0/2)
+- 0-3 DTE: BANNED
+    - drawdown state is RED, not GREEN
+    - only 0 consecutive green weeks (need 4)
+    - VIX 15.4 not > 20
+- Behavioural check (answer honestly before trading):
+    [ ] Am I tired / trading late at night? (every blowup was a late 0-DTE)
+    [ ] Am I revenge-trading a loss / chasing the old watermark?
+    [ ] Have I already hit today's / this week's limit?
+    [ ] Is there an event in the next 28d I'm ignoring? (see EVENTS)
+- Priority order: survivability > tail risk > don't fight trends > consistency > return.
+
+============================================================
+SPX DAILY DATA - 10 Aug 2026 (SGT)
+============================================================
+
+EVENTS (next 28d) -- auto-filled, verify big ones:
+- !! 2026-08-12 (in 2d) CPI (July) [HIGH] -> affects DTE 0-3/7/10-14/15-21
+-    2026-08-21 (in 11d) Monthly OpEx [MED] -> affects DTE 10-14/15-21
+-    2026-08-26 (in 16d) Core PCE (July) [MED] -> affects DTE 15-21
+- !! 2026-09-04 (in 25d) Jobs report / NFP (Aug) [HIGH] -> beyond 21 DTE
+  Rule: a spread that expires ON/AFTER a HIGH event carries that event's gap risk. Prefer DTE that expires BEFORE it, or widen strikes.
+
+PRICE:
+- SPX: 7,758 (+0.62% 1d, +3.58% 5d)
+- Distance from ATH: +0.00%
+- 20d MA: 7,525
+- 50d MA: 7,494
+- 200d MA: 7,050
+- Position: above all MAs -> strong uptrend
+- 14d ATR: 92.7 pts
+- RSI(14): 69.8
+- 60d swing high: 7,758
+- 60d swing low: 7,267
+
+VOLATILITY:
+- VIX: 15.45 (+3.69%, direction: flat)
+- VIX 1y percentile: 16%
+- VIX bucket: VIX 15-20
+- VIX term structure: 9D 16.85 vs 30D 15.45 -> ratio 1.09 (backwardation (stress; unfavourable for short premium))
+- MOVE: 70.88 (direction: flat, status: normal)
+- Realized vol (20d): 14.39%
+- IV/RV ratio: 1.07 -> IV roughly fair
+
+CROSS-ASSET:
+- DXY: 99.65 (flat)
+- US 10Y: 4.66% (flat)
+  * Yahoo ^TNX raw value: 4.66
+- WTI Oil: $79.04 (+1.10% 1d, -1.62% 5d)
+- Sector breadth: 91% of sectors above 50d MA (10/11)
+- Cross-asset stress score: 1/7 active signals
+  * VIX term structure in backwardation (9D/30D = 1.09)
+
+STRIKE DISTANCE (ATR x VIX bucket -- short strike >= this far from spot):
+- 0-3 DTE: BANNED (VIX too low for 0-3 DTE)
+- 7 DTE: 2.0x ATR = 185 pts from spot (downside short-strike ~ 7,572)
+- 10-14 DTE: 2.5x ATR = 232 pts from spot (downside short-strike ~ 7,526)
+- 15-21 DTE: 3.0x ATR = 278 pts from spot (downside short-strike ~ 7,480)
+  (VIX bucket today: VIX 15-20)
+
+SENTIMENT (fill in / Phase 1):
+- P/C ratio (Cboe): [ ]
+- CNN Fear & Greed: [ ]
+- Polymarket / Kalshi (relevant): [ ]
+- HY credit spreads (FRED BAMLH0A0HYM2): [ ]  (blocked at office; run from home)
+
+============================================================
+END OF DATA - paste into AI prompt
+============================================================

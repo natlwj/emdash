@@ -1,0 +1,10 @@
+{
+  "account_value": 9000,
+  "peak_value": 23000,
+  "weekly_pnl": 0,
+  "open_positions": {
+    "CCS": 0,
+    "PCS": 0
+  },
+  "consecutive_green_weeks": 0
+}
