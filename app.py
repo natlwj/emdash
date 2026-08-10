@@ -290,8 +290,10 @@ def load_state() -> dict:
 
 def save_state(d: dict) -> None:
     try:
+        cur = load_state()          # merge, don't clobber keys owned by other
+        cur.update(d)               # modules (e.g. database_tab's news_src_sort)
         with open(STATE_PATH, "w", encoding="utf-8") as fh:
-            json.dump(d, fh, indent=2)
+            json.dump(cur, fh, indent=2)
     except Exception:
         pass
 

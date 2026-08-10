@@ -837,6 +837,16 @@ NEWS_COUNTRY_ALIASES = {
     "tirana": "ALB", "albanian": "ALB", "sarajevo": "BIH", "bosnian": "BIH",
     "chisinau": "MDA", "moldovan": "MDA", "podgorica": "MNE", "montenegrin": "MNE",
     "skopje": "MKD", "macedonian": "MKD",
+
+
+    # v3.4: high-frequency unambiguous terms from the untagged audit
+    "brexit": "GBR", "gilts": "GBR", "downing street": "GBR",
+    "evergrande": "CHN", "port dickson": "MYS",
+    "strait of hormuz": "OMN",
+    # full-name officials only (bare surnames are unsafe -- tested)
+    "tiff macklem": "CAN", "sanjay malhotra": "IND", "kazuo ueda": "JPN",
+    "andrew bailey": "GBR", "joachim nagel": "EMU",
+    "isabel schnabel": "EMU", "piero cipollone": "EMU",
 }
 
 # -------------------------------------------------------------------
@@ -852,7 +862,8 @@ NEWS_TOPICS = {
                       "payroll", "payrolls", "unemployment", "jobs",
                       "retail sales", "industrial production", "trade balance",
                       "data print", "forecast", "revised", "recession",
-                      "growth", "output", "budget", "deficit", "surplus"],
+                      "growth", "output", "budget", "deficit", "surplus",  "labour market", "labor market", "wages",
+"productivity", "monetarism"],
     "trade":         ["trade", "tariff", "tariffs", "export", "import",
                       "customs", "supply chain", "wto", "trade war", "embargo",
                       "quota", "trade deal"],
@@ -868,7 +879,8 @@ NEWS_TOPICS = {
                       "commodities", "metals", "nickel", "lithium", "cobalt",
                       "palm oil", "grain"],
     "equities":      ["stocks", "equity", "equities", "shares", "ipo", "index",
-                      "market rally", "selloff", "bourse", "listing", "buyback"],
+                      "market rally", "selloff", "bourse", "listing", "buyback",  "private equity", "buyout", "takeover", "merger",
+                    "acquisition", "hedge fund", "valuation"],
     "energy":        ["energy", "power", "electricity", "renewable", "nuclear",
                       "coal", "pipeline", "solar", "hydro", "grid", "refinery",
                       "blackout"],
@@ -883,7 +895,7 @@ NEWS_TOPICS = {
                       "missile", "drone", "militant", "insurgent", "rebels",
                       "junta", "martial law", "impeach", "cabinet", "summit",
                       "treaty", "alliance", "nato", "embassy", "diplomat",
-                      "talks", "nuclear weapon", "warhead", "annexation"],
+                      "talks", "nuclear weapon", "warhead", "annexation" "brexit", "submarine", "espionage", "spying", "nato"],
     "disaster":      ["wildfire", "flood", "flooding", "earthquake", "typhoon",
                       "hurricane", "cyclone", "drought", "famine", "volcano",
                       "landslide", "storm", "evacuat", "death toll", "monsoon",

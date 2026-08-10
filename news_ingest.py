@@ -250,6 +250,25 @@ COUNTRY_RX = re.compile("|".join(_pattern_for(k) for k in _ALIAS_KEYS if _patter
 # findall returns the matched TEXT, so we look the iso3 back up here.
 _ALIAS_LOOKUP = {k: v for k, v in ALIAS_TABLE.items()}
 
+# ---- CASE-SENSITIVE acronyms (matched on the ORIGINAL text, not lowercased) ----
+# So "US" -> USA but the word "us" / "bus" / "SUS" do NOT match. The lowercase
+# alias table physically cannot do this (it lowercases the headline first).
+ACRONYM_ALIASES = {
+    "US": "USA", "U.S.": "USA", "U.S": "USA",
+    "UK": "GBR", "U.K.": "GBR", "U.K": "GBR",
+    "EU": "EMU",
+    "UAE": "ARE", "PRC": "CHN", "ROK": "KOR", "RSA": "ZAF",
+}
+
+
+def _acro_pattern(k: str) -> str:
+    return r"(?<![A-Za-z0-9])" + re.escape(k) + r"(?![A-Za-z0-9])"
+
+
+_ACRO_KEYS = sorted(ACRONYM_ALIASES, key=len, reverse=True)
+ACRONYM_RX = re.compile("|".join(_acro_pattern(k) for k in _ACRO_KEYS))
+
+
 
 def tag_countries(text: str) -> str:
     """Comma-separated iso3 tags for one headline (word-boundary safe).
@@ -269,6 +288,11 @@ def tag_countries(text: str) -> str:
                 if m.startswith(k):
                     iso3 = v
                     break
+        if iso3 and iso3 not in found:
+            found.append(iso3)
+        # case-sensitive acronym pass on the ORIGINAL text (US/UK/EU/UAE...)
+    for m in ACRONYM_RX.findall(str(text)):
+        iso3 = ACRONYM_ALIASES.get(m)
         if iso3 and iso3 not in found:
             found.append(iso3)
     return ",".join(found)

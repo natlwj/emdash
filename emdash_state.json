@@ -1,7 +1,7 @@
 {
-  "tab": "news",
-  "columns_by": "Topic",
-  "f_days": 1,
+  "tab": "database",
+  "columns_by": "Desk",
+  "f_days": 2,
   "f_desk": [],
   "f_tier": [
     "A",
@@ -29,7 +29,7 @@
   "grid_compare": [
     "on"
   ],
-  "ctry_range": "10Y",
+  "ctry_range": "5Y",
   "es_mode": "cross",
   "es_sig_country": "USA",
   "es_sig_ind": "POLICY_RATE",
@@ -41,5 +41,6 @@
   "es_horizon": 80,
   "es_xsort": "abs",
   "mrc_days": 40,
-  "mrc_range": "Max"
+  "mrc_range": "Max",
+  "news_src_sort": "tier"
 }
