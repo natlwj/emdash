@@ -573,7 +573,10 @@ MRC_LO = -0.75
 MRC_STABLE = 0.5
 MRC_MIN_SCORE = 2.0
 MRC_MIN_DAYS = 5
-# MRC_MIN_MARGIN = 2.0   # uncomment when mrc.py v3 installed
+MRC_MIN_MARGIN = 2.0
+# Which countries appear in the "Key policy rates at a glance" strip
+# (Indicator Comparison tab). Edit freely - these are iso3 codes.
+KEY_RATE_ISOS = ["USA", "EMU", "GBR", "JPN", "CHN", "IND", "BRA", "IDN", "ZAF"]
 
 # ===================================================================
 # NEWS LAYER
@@ -895,7 +898,7 @@ NEWS_TOPICS = {
                       "missile", "drone", "militant", "insurgent", "rebels",
                       "junta", "martial law", "impeach", "cabinet", "summit",
                       "treaty", "alliance", "nato", "embassy", "diplomat",
-                      "talks", "nuclear weapon", "warhead", "annexation" "brexit", "submarine", "espionage", "spying", "nato"],
+                      "talks", "nuclear weapon", "warhead", "annexation", "brexit", "submarine", "espionage", "spying", "nato"],
     "disaster":      ["wildfire", "flood", "flooding", "earthquake", "typhoon",
                       "hurricane", "cyclone", "drought", "famine", "volcano",
                       "landslide", "storm", "evacuat", "death toll", "monsoon",

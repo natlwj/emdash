@@ -96,12 +96,64 @@ JOBS = {
                 "consider running in the terminal to see progress.",
         "accent": P["navy3"],
     },
+
+
     "pull-all": {
         "label": "Pull Everything",
         "script": "ingest.py", "args": [],
         "desc": "Every collector: macro + markets. Can take many minutes.",
         "accent": P["gold"],
     },
+    "pull-worldbank": {
+        "label": "World Bank",
+        "script": "ingest.py", "args": ["--only", "worldbank"],
+        "desc": "World Bank annual macro only (105 countries). Slow.",
+        "accent": P["navy3"],
+    },
+    "pull-dbnomics": {
+        "label": "IMF / DBnomics",
+        "script": "ingest.py", "args": ["--only", "dbnomics"],
+        "desc": "IMF monthly macro only (policy rate, CPI, reserves, trade).",
+        "accent": P["navy3"],
+    },
+    "pull-fx": {
+        "label": "FX",
+        "script": "ingest.py", "args": ["--only", "yahoo_fx"],
+        "desc": "Daily FX (Yahoo) only.",
+        "accent": P["navy2"],
+    },
+    "pull-equities": {
+        "label": "Equities",
+        "script": "ingest.py", "args": ["--only", "equities", "stooq_eq"],
+        "desc": "Equity indices (Yahoo + Stooq) only.",
+        "accent": P["navy2"],
+    },
+    "pull-yields": {
+        "label": "Yields",
+        "script": "ingest.py", "args": ["--only", "yields"],
+        "desc": "Sovereign bond yields only.",
+        "accent": P["navy2"],
+    },
+    "pull-commodities": {
+        "label": "Commodities",
+        "script": "ingest.py", "args": ["--only", "commodities"],
+        "desc": "Commodity futures (Brent/WTI/metals/ags) only.",
+        "accent": P["navy2"],
+    },
+    "pull-globals": {
+        "label": "Global gauges",
+        "script": "ingest.py", "args": ["--only", "globals"],
+        "desc": "DXY / VIX / MOVE / SPX / BTC / US curve only.",
+        "accent": P["navy2"],
+    },
+    "pull-fred": {
+        "label": "Credit spreads",
+        "script": "ingest.py", "args": ["--only", "fred"],
+        "desc": "ICE BofA credit spreads (FRED). Often blocked on office network.",
+        "accent": P["brown"],
+    },
+
+
     "prune-news": {
         "label": f"Clear old news (>{PRUNE_DAYS}d)",
         "pyc": f"import core; print('cleared', core.prune_news({PRUNE_DAYS}), "

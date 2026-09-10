@@ -320,9 +320,12 @@ def _freshness_strip(log):
         markets_keep = set(log["source_id"]) - _NEWS_SRC - _MACRO_SRC
     return html.Div([
         _fresh_card("News", log, _NEWS_SRC, None, news_hint=True),
-        _fresh_card("Macro", log, _MACRO_SRC, ["pull-macro"]),
+        _fresh_card("Macro", log, _MACRO_SRC,
+                    ["pull-macro", "pull-worldbank", "pull-dbnomics"]),
         _fresh_card("Markets", log, markets_keep,
-                    ["pull-markets", "pull-all"]),
+                    ["pull-markets", "pull-fx", "pull-equities", "pull-yields",
+                     "pull-commodities", "pull-globals", "pull-fred",
+                     "pull-all"]),
     ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap",
               "alignItems": "stretch"})
 
@@ -508,7 +511,8 @@ def _news_sort_control():
                                     "letterSpacing": ".5px",
                                     "textTransform": "uppercase",
                                     "color": P["navy2"], "marginRight": "8px"}),
-        dcc.Dropdown(id="news-src-sort", value="headlines",
+        dcc.Dropdown(id="news-src-sort",
+                    value=_load_state().get("news_src_sort", "headlines"),
                      clearable=False, options=_SORT_OPTS,
                      persistence=True, persistence_type="local",
                      style={"width": "210px"}),

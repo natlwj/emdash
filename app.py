@@ -989,18 +989,14 @@ def news_board(columns_by, desks, tiers, topics, days, search=""):
         total = len(items)
         cards = [_news_card(r) for r in items[:CARDS_PER_COL]]
         if total > CARDS_PER_COL:
-            rest = items[CARDS_PER_COL:CARDS_PER_COL + EXPAND_EXTRA]
-            hidden = total - CARDS_PER_COL - len(rest)
+            rest = items[CARDS_PER_COL:]
             cards.append(html.Div([
-                html.Button(f"+ {total - CARDS_PER_COL} more - click to load",
+                html.Button(f"Show all {len(rest)} more in this column",
                             id={"type": "news-more-btn", "col": col},
                             n_clicks=0, className="emd-btn emd-btn--ghost"),
                 dcc.Store(id={"type": "news-more-store", "col": col},
                           data=[_slim_row(r) for r in rest]),
                 html.Div(id={"type": "news-more-wrap", "col": col}),
-                (html.Div(f"...{hidden} more beyond that - narrow the filter.",
-                          className="emd-col-hint") if hidden > 0
-                 else html.Div()),
             ], className="emd-col-more"))
         board.append(html.Div([
             html.Div([html.Span(_column_title(col, columns_by)),
@@ -1014,6 +1010,27 @@ def news_board(columns_by, desks, tiers, topics, days, search=""):
 # ===================================================================
 # COUNTRY RENDERING
 # ===================================================================
+def key_rates_strip():
+    tiles = []
+    for iso in getattr(config, "KEY_RATE_ISOS",
+                       ["USA", "EMU", "GBR", "JPN", "CHN"]):
+        df = cached_series(iso, "POLICY_RATE")
+        if df is None or df.empty:
+            val, date = "-", ""
+        else:
+            last = df.dropna().iloc[-1]
+            val = f"{last['value']:.2f}%"
+            date = str(last["date"])[:10]
+        tiles.append(html.Div([
+            html.Div(NAME_BY_ISO.get(iso, iso), className="emd-stat-label"),
+            html.Div(val, className="emd-stat-value"),
+            html.Div(date, className="emd-stat-date"),
+        ], className="emd-stat"))
+    return html.Div([
+        html.Div("KEY POLICY RATES  \u00b7  latest available",
+                 className="emd-section-title", style={"marginBottom": "6px"}),
+        html.Div(tiles, className="emd-stat-row"),
+    ], style={"margin": "8px 16px"})
 def stat_tiles(iso3):
     tiles = []
     for ind in config.WB_INDICATORS:
@@ -1898,6 +1915,7 @@ def _tab_country():
                     value=sv("grid_compare", []), className="emd-check")),
             ], className="emd-controls"),
 
+            html.Div(key_rates_strip(), id="key-rates-strip"),
             html.Div(id="stat-tiles"),
 
             dcc.Loading(html.Div([
@@ -2098,7 +2116,7 @@ def serve_layout():
             html.Div(className="emd-title-sep"),
             html.Div("EM Macro Research OS", className="emd-tagline"),
             html.Div(className="emd-spacer"),
-            html.Div([html.Span(className="dot"), "SMU EMERGING MARKETS"],
+            html.Div([html.Span(className="dot"), "GCM"],
                      className="emd-badge"),
         ], className="emd-header"),
         dcc.Tabs(id="tabs", value=default_tab, parent_className="emd-tabs",
