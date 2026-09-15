@@ -1,175 +1,76 @@
 """
-EMDASH :: runner.py   (v6)
+EMDASH :: runner.py   (v8.2)
 ===================================================================
-BACKGROUND PULL RUNNER + real Pull buttons + a live status pill.
+BACKGROUND PULL RUNNER + Pull panels for the SQLite Store tab.
 
-Each button launches work as a BACKGROUND SUBPROCESS so the dashboard never
-freezes. A concurrency guard stops two jobs at once.
-
-v6 CHANGES
-  * NEWS PULL SPLIT INTO TWO BUTTONS.
-        "Pull feeds (RSS)"  -> news_ingest.py --only rss    (the ~43 feeds)
-        "Pull GDELT"        -> news_ingest.py --only gdelt  (per-country search)
-    RSS feeds serve only the last day or two and IGNORE the pull window; GDELT
-    is the one that accepts a look-back depth. So only "Pull GDELT" is wired to
-    the "Pull window (GDELT)" dropdown -- which is exactly why the dropdown is
-    labelled (GDELT). The old combined "pull-news" id is kept as an ALIAS so any
-    older layout that still calls buttons_bar(["pull-news", ...]) keeps working.
-  * News tab should now call:
-        runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"])
-
-v5 CHANGES (unchanged here)
-  * REAL BUTTONS (filled, SMU-palette accent), description as a hover tooltip.
-  * POLL NO LONGER CHURNS: the poll returns no_update UNLESS the status snapshot
-    actually changed, and the interval is fully DISABLED when idle.
-  * "Pull window (GDELT)" is a PULL setting, distinct from the News tab's
-    "Show news from" DISPLAY filter.
-
-DUPLICATES: news PK is (ts,url) + INSERT OR IGNORE, so re-pulling only adds
-genuinely new rows -- pulling often is safe and cheap.
-
-BIG/SLOW PULLS: buttons capture subprocess output (no live progress). For a
-long macro/everything pull, prefer running it in the terminal directly, e.g.
-    python ingest.py --only worldbank dbnomics
-so you can watch per-country progress.
-
-API:
-    runner.buttons_bar(which)  -> row of real buttons + status pills
-    runner.news_since()        -> the "Pull window (GDELT)" dropdown
-    runner.status_store()      -> the dcc.Store + (disabled) dcc.Interval
-    runner.register(app)       -> wires clicks + poll + auto enable/disable
+v8.2
+  * Optional "Trim older rows to timeframe" (opt-in checkbox, default OFF).
+    When ticked WITH a non-full timeframe, after the pull ingest deletes rows
+    older than the timeframe cutoff -- scoped per source, so trimming e.g.
+    Risk gauges never touches FRED credit spreads that share global_market.
+    Passed to ingest via EMDASH_MARKET_TRIM. Macro/predmarkets never trimmed.
+v8.1
+  * Timeframe presets 10y/20y/50y; removed "Pull everything"; persistent ticks.
 ===================================================================
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import threading
 import datetime as dt
 
-from dash import dcc, html, Input, Output, State, no_update
+from dash import dcc, html, Input, Output, State, no_update, callback_context
 
 import config
 
 P = config.PALETTE
 ROOT = config.ROOT
 PRUNE_DAYS = int(getattr(config, "NEWS_PRUNE_DAYS", 90))
+BORANGE = getattr(config, "BLOOMBERG_ORANGE", "#FFA028")
+_TF_PATH = ROOT / "pull_state.json"
 
 JOBS = {
-    # ---- NEWS: split into RSS vs GDELT (v6) ----
     "pull-rss": {
-        "label": "Pull feeds (RSS)",
-        "script": "news_ingest.py", "args": ["--only", "rss"],
-        "desc": "Fetch the latest headlines from the RSS/Atom feeds "
-                "(central banks, wires, local EM outlets). Serves the last day "
-                "or two only; the pull-window dropdown does NOT affect these.",
+        "label": "Pull RSS", "script": "news_ingest.py", "args": ["--only", "rss"],
+        "desc": "Fetch the latest RSS/Atom headlines (last day or two).",
         "accent": P["navy2"],
     },
     "pull-gdelt": {
-        "label": "Pull GDELT",
-        "script": "news_ingest.py", "args": ["--only", "gdelt"],
-        "desc": "Per-country GDELT search. Uses the 'Pull window (GDELT)' "
-                "dropdown to decide how far back to reach.",
+        "label": "Pull GDELT", "script": "news_ingest.py", "args": ["--only", "gdelt"],
+        "desc": "Per-country GDELT search; uses the window dropdown.",
         "uses_since": True, "accent": P["navy3"],
     },
-    # Back-compat alias: old layouts that still ask for "pull-news" get the
-    # combined RSS+GDELT pull. Safe to leave; new layout uses the two above.
-    "pull-news": {
-        "label": "Pull News (all)",
-        "script": "news_ingest.py", "args": [],
-        "desc": "Fetch the latest headlines (RSS + GDELT). Safe to run often.",
-        "uses_since": True, "accent": P["navy2"],
-    },
-    # ---- MARKETS / MACRO ----
-    "pull-markets": {
-        "label": "Pull Markets",
-        "script": "ingest.py",
-        "args": ["--only", "yahoo_fx", "equities", "globals", "commodities"],
-        "desc": "FX, equity indices, global gauges, commodities.",
-        "accent": P["navy2"],
-    },
-    "pull-macro": {
-        "label": "Pull Macro",
-        "script": "ingest.py", "args": ["--only", "worldbank", "dbnomics"],
-        "desc": "World Bank annual + IMF monthly macro. Slow (105 countries) - "
-                "consider running in the terminal to see progress.",
-        "accent": P["navy3"],
-    },
-
-
-    "pull-all": {
-        "label": "Pull Everything",
-        "script": "ingest.py", "args": [],
-        "desc": "Every collector: macro + markets. Can take many minutes.",
-        "accent": P["gold"],
-    },
-    "pull-worldbank": {
-        "label": "World Bank",
-        "script": "ingest.py", "args": ["--only", "worldbank"],
-        "desc": "World Bank annual macro only (105 countries). Slow.",
-        "accent": P["navy3"],
-    },
-    "pull-dbnomics": {
-        "label": "IMF / DBnomics",
-        "script": "ingest.py", "args": ["--only", "dbnomics"],
-        "desc": "IMF monthly macro only (policy rate, CPI, reserves, trade).",
-        "accent": P["navy3"],
-    },
-    "pull-fx": {
-        "label": "FX",
-        "script": "ingest.py", "args": ["--only", "yahoo_fx"],
-        "desc": "Daily FX (Yahoo) only.",
-        "accent": P["navy2"],
-    },
-    "pull-equities": {
-        "label": "Equities",
-        "script": "ingest.py", "args": ["--only", "equities", "stooq_eq"],
-        "desc": "Equity indices (Yahoo + Stooq) only.",
-        "accent": P["navy2"],
-    },
-    "pull-yields": {
-        "label": "Yields",
-        "script": "ingest.py", "args": ["--only", "yields"],
-        "desc": "Sovereign bond yields only.",
-        "accent": P["navy2"],
-    },
-    "pull-commodities": {
-        "label": "Commodities",
-        "script": "ingest.py", "args": ["--only", "commodities"],
-        "desc": "Commodity futures (Brent/WTI/metals/ags) only.",
-        "accent": P["navy2"],
-    },
-    "pull-globals": {
-        "label": "Global gauges",
-        "script": "ingest.py", "args": ["--only", "globals"],
-        "desc": "DXY / VIX / MOVE / SPX / BTC / US curve only.",
-        "accent": P["navy2"],
-    },
-    "pull-fred": {
-        "label": "Credit spreads",
-        "script": "ingest.py", "args": ["--only", "fred"],
-        "desc": "ICE BofA credit spreads (FRED). Often blocked on office network.",
-        "accent": P["brown"],
-    },
-
-
     "prune-news": {
         "label": f"Clear old news (>{PRUNE_DAYS}d)",
         "pyc": f"import core; print('cleared', core.prune_news({PRUNE_DAYS}), "
                f"'rows older than {PRUNE_DAYS} days')",
-        "desc": f"Delete news older than {PRUNE_DAYS} days to keep the DB lean.",
+        "desc": f"Delete news older than {PRUNE_DAYS} days.",
         "accent": P["brown"],
+    },
+    "pull-selected": {
+        "label": "Pull selected", "custom": True,
+        "desc": "Pull the ticked data sources.", "accent": P["gold"],
     },
 }
 
 SINCE_OPTS = [("Last 3 days", "3d"), ("Last week", "1w"),
               ("Last 2 weeks", "2w"), ("Last month", "1m")]
 
+TIMEFRAME_OPTS = [
+    ("Full history", ""), ("1 day", "1d"), ("3 days", "3d"), ("7 days", "7d"),
+    ("1 month", "1m"), ("3 months", "3m"), ("6 months", "6m"),
+    ("1 year", "1y"), ("5 years", "5y"), ("10 years", "10y"),
+    ("20 years", "20y"), ("50 years", "50y"),
+]
+_TF_LABEL = {v: l for l, v in TIMEFRAME_OPTS}
+
 _lock = threading.Lock()
 _state: dict[str, dict] = {j: {"status": "idle"} for j in JOBS}
 _procs: dict[str, subprocess.Popen] = {}
-_last_snap = {"v": None}     # for the change-only poll
+_last_snap = {"v": None}
 
 
 def _now() -> str:
@@ -178,6 +79,73 @@ def _now() -> str:
 
 def _any_running() -> bool:
     return any(s.get("status") == "running" for s in _state.values())
+
+
+def _rel(last_run: str) -> str:
+    try:
+        d = dt.date.fromisoformat(str(last_run)[:10])
+    except Exception:
+        return "never"
+    n = (dt.date.today() - d).days
+    if n <= 0:
+        return "today"
+    if n == 1:
+        return "yesterday"
+    if n < 30:
+        return f"{n}d ago"
+    if n < 365:
+        return f"{n // 30}mo ago"
+    return f"{n // 365}y ago"
+
+
+def _log_lookup(log) -> dict:
+    d = {}
+    if log is None:
+        return d
+    try:
+        for _, r in log.iterrows():
+            d[str(r["source_id"])] = (str(r["last_run"]), r.get("rows"))
+    except Exception:
+        pass
+    return d
+
+
+def _since_to_start(since) -> str:
+    """'5y' / '3m' / '7d' -> a YYYY-MM-DD start date. '' = full history."""
+    s = str(since or "").strip()
+    if not s:
+        return ""
+    try:
+        num, unit = int(s[:-1]), s[-1].lower()
+    except Exception:
+        return ""
+    days = {"d": 1, "w": 7, "m": 30, "y": 365}.get(unit)
+    if not days:
+        return ""
+    return (dt.date.today() - dt.timedelta(days=num * days)).isoformat()
+
+
+def _record_timeframe(keys, since_value) -> None:
+    label = _TF_LABEL.get(str(since_value or ""), "Full history")
+    try:
+        d = {}
+        if _TF_PATH.exists():
+            d = json.load(open(_TF_PATH, encoding="utf-8")) or {}
+        now = dt.datetime.now().isoformat(timespec="seconds")
+        for k in keys:
+            d[k] = {"since": label, "ts": now}
+        json.dump(d, open(_TF_PATH, "w", encoding="utf-8"), indent=2)
+    except Exception:
+        pass
+
+
+def _timeframes() -> dict:
+    try:
+        if _TF_PATH.exists():
+            return json.load(open(_TF_PATH, encoding="utf-8")) or {}
+    except Exception:
+        pass
+    return {}
 
 
 def _argv_for(job):
@@ -189,18 +157,7 @@ def _argv_for(job):
     return [sys.executable, str(script), *job.get("args", [])]
 
 
-def _launch(job_id, since=None) -> None:
-    job = JOBS[job_id]
-    argv = _argv_for(job)
-    if argv is None:
-        with _lock:
-            _state[job_id] = {"status": "failed", "started": _now(),
-                              "finished": _now(), "rc": -1,
-                              "tail": f"{job.get('script', '?')} not found"}
-        return
-    env = dict(os.environ)
-    if job.get("uses_since") and since:
-        env["EMDASH_GDELT_TIMESPAN"] = str(since)
+def _spawn(job_id, argv, env):
     try:
         proc = subprocess.Popen(argv, cwd=str(ROOT), env=env,
                                 stdout=subprocess.PIPE,
@@ -215,6 +172,48 @@ def _launch(job_id, since=None) -> None:
         _state[job_id] = {"status": "running", "started": _now(),
                           "finished": None, "rc": None, "tail": ""}
     threading.Thread(target=_reap, args=(job_id, proc), daemon=True).start()
+
+
+def _launch(job_id, since=None) -> None:
+    job = JOBS[job_id]
+    argv = _argv_for(job)
+    if argv is None:
+        with _lock:
+            _state[job_id] = {"status": "failed", "started": _now(),
+                              "finished": _now(), "rc": -1,
+                              "tail": f"{job.get('script', '?')} not found"}
+        return
+    env = dict(os.environ)
+    if job.get("uses_since") and since:
+        env["EMDASH_GDELT_TIMESPAN"] = str(since)
+    _spawn(job_id, argv, env)
+
+
+def _launch_custom(only_keys, since=None, trim=False) -> None:
+    job_id = "pull-selected"
+    valid = set(getattr(config, "SOURCE_PROVIDER", {}))
+    keys = [k for k in (only_keys or []) if k in valid]
+    if not keys:
+        with _lock:
+            _state[job_id] = {"status": "failed", "started": _now(),
+                              "finished": _now(), "rc": -1,
+                              "tail": "no pullable sources ticked"}
+        return
+    script = ROOT / "ingest.py"
+    if not script.exists():
+        with _lock:
+            _state[job_id] = {"status": "failed", "started": _now(),
+                              "finished": _now(), "rc": -1,
+                              "tail": "ingest.py not found"}
+        return
+    env = dict(os.environ)
+    start = _since_to_start(since)
+    if start:
+        env["EMDASH_MARKET_START"] = start
+        if trim:
+            env["EMDASH_MARKET_TRIM"] = start
+    _record_timeframe(keys, since)
+    _spawn(job_id, [sys.executable, str(script), "--only", *keys], env)
 
 
 def _reap(job_id, proc) -> None:
@@ -249,41 +248,34 @@ def _status_pill(job_id, s):
         txt = f"Failed {s.get('finished', '')} - {s.get('tail', '')[:60]}"
         col, bg = P["bad"], "#F7E4E1"
     else:
-        return html.Span()      # idle -> blank
+        return html.Span()
     return html.Span(txt, style={"color": col, "background": bg,
                                  "padding": "3px 9px", "borderRadius": "8px",
                                  "fontSize": "11px", "marginLeft": "8px",
-                                 "whiteSpace": "nowrap", "maxWidth": "300px",
-                                 "overflow": "hidden",
-                                 "textOverflow": "ellipsis",
+                                 "whiteSpace": "nowrap", "maxWidth": "340px",
+                                 "overflow": "hidden", "textOverflow": "ellipsis",
                                  "verticalAlign": "middle"})
 
 
 def _button(jid):
-    """A REAL filled button (not an info card)."""
     job = JOBS[jid]
     accent = job.get("accent", P["navy2"])
     return html.Div([
-        html.Button(
-            "\u21bb  " + job["label"], id=f"btn-{jid}", n_clicks=0,
-            title=job["desc"],
-            style={"background": accent, "color": "#fff", "border": "none",
-                   "borderRadius": "8px", "padding": "8px 14px",
-                   "fontWeight": 700, "fontSize": "13px", "cursor": "pointer",
-                   "boxShadow": "0 1px 2px rgba(31,73,125,.18)",
-                   "fontFamily": config.FONTS["ui"]}),
+        html.Button("\u21bb  " + job["label"], id=f"btn-{jid}", n_clicks=0,
+                    title=job.get("desc", ""),
+                    style={"background": accent, "color": "#fff", "border": "none",
+                           "borderRadius": "8px", "padding": "8px 14px",
+                           "fontWeight": 700, "fontSize": "13px", "cursor": "pointer",
+                           "fontFamily": config.FONTS["ui"]}),
         html.Span(id=f"stat-{jid}"),
-    ], style={"display": "inline-flex", "alignItems": "center",
-              "margin": "2px 4px"})
+    ], style={"display": "inline-flex", "alignItems": "center", "margin": "2px 4px"})
 
 
 def buttons_bar(which=None):
-    which = which or list(JOBS)
-    return html.Div([_button(jid) for jid in which if jid in JOBS],
-                    className="emd-runner",
-                    style={"display": "flex", "gap": "8px",
-                           "flexWrap": "wrap", "alignItems": "center",
-                           "padding": "2px 0"})
+    which = which or [j for j in JOBS if not JOBS[j].get("custom")]
+    return html.Div([_button(j) for j in which if j in JOBS],
+                    style={"display": "flex", "gap": "8px", "flexWrap": "wrap",
+                           "alignItems": "center", "padding": "2px 0"})
 
 
 def news_since():
@@ -291,19 +283,182 @@ def news_since():
     if default not in [v for _, v in SINCE_OPTS]:
         default = "3d"
     return html.Div([
-        html.Span("Pull window (GDELT)", className="emd-ctrl-label"),
+        html.Span("GDELT window", className="emd-ctrl-label"),
         dcc.Dropdown(id="news-since", value=default, clearable=False,
                      style={"width": "150px"},
                      options=[{"label": l, "value": v} for l, v in SINCE_OPTS]),
-    ], className="emd-ctrl-group",
-        title="How far back GDELT reaches WHEN YOU CLICK Pull GDELT. This is a "
-              "PULL setting - it does not change what is displayed, and it does "
-              "NOT affect the RSS feeds. Use 'Show news from' to change what is "
-              "displayed.")
+    ], className="emd-ctrl-group")
+
+
+_COLW = {"name": "190px", "prov": "128px", "note": "320px",
+         "last": "86px", "tf": "96px", "rows": "62px"}
+
+
+def _type_chip(kind):
+    if kind == "bloomberg":
+        return html.Span("Bloomberg", style={
+            "background": BORANGE, "color": "#3A2A00", "fontWeight": 700,
+            "fontSize": "9.5px", "padding": "1px 7px", "borderRadius": "10px"})
+    return html.Span("open-source", style={
+        "background": "#E4F0E6", "color": P["good"], "fontWeight": 600,
+        "fontSize": "9.5px", "padding": "1px 7px", "borderRadius": "10px"})
+
+
+def _hcell(txt, w, align="left"):
+    return html.Span(txt, style={
+        "width": w, "minWidth": w, "textAlign": align, "fontSize": "10px",
+        "fontWeight": 700, "letterSpacing": ".4px", "textTransform": "uppercase",
+        "color": P["navy2"]})
+
+
+def _cell(child, w, align="left", **extra):
+    st = {"width": w, "minWidth": w, "textAlign": align, "overflow": "hidden",
+          "textOverflow": "ellipsis", "whiteSpace": "nowrap"}
+    st.update(extra)
+    return html.Span(child, style=st)
+
+
+def _table_header(with_check=True, with_tf=True):
+    cells = []
+    if with_check:
+        cells.append(html.Span(style={"width": "26px", "minWidth": "26px"}))
+    cells.append(_hcell("Source", _COLW["name"]))
+    cells.append(_hcell("Provider", _COLW["prov"]))
+    cells.append(_hcell("Notes", _COLW["note"]))
+    cells.append(_hcell("Last pull", _COLW["last"], "right"))
+    if with_tf:
+        cells.append(_hcell("Timeframe", _COLW["tf"], "right"))
+    cells.append(_hcell("Rows", _COLW["rows"], "right"))
+    return html.Div(cells, style={
+        "display": "flex", "alignItems": "center", "gap": "10px",
+        "padding": "0 0 6px 0", "borderBottom": f"2px solid {P['gold']}"})
+
+
+def _info_row(meta, key, lk, tf, with_tf=True):
+    last, rows = "never", "\u2014"
+    lg = meta.get("log")
+    if lg and lg in lk:
+        lr, rw = lk[lg]
+        last = _rel(lr)
+        try:
+            rows = f"{int(rw):,}"
+        except Exception:
+            rows = "\u2014"
+    tfv = tf.get(key, {}).get("since", "\u2014") if with_tf else None
+    name = html.Span([
+        html.Span(meta["label"], style={"fontWeight": 600, "color": P["ink"],
+                                        "marginRight": "6px"}),
+        _type_chip(meta["kind"]),
+    ])
+    cells = [
+        _cell(name, _COLW["name"], whiteSpace="normal"),
+        _cell(meta["provider"], _COLW["prov"], color=P["muted"], fontSize="12px"),
+        _cell(f"{meta['freq']} \u00b7 {meta['note']}", _COLW["note"],
+              color=P["muted"], fontSize="11px", whiteSpace="normal"),
+        _cell(last, _COLW["last"], "right", fontSize="11.5px",
+              color=(P["muted"] if last == "never" else P["ink"])),
+    ]
+    if with_tf:
+        cells.append(_cell(tfv, _COLW["tf"], "right", fontSize="11px",
+                           color=P["muted"]))
+    cells.append(_cell(rows, _COLW["rows"], "right", fontWeight=600,
+                       fontSize="12px"))
+    return cells
+
+
+def data_panel(log=None):
+    sp = getattr(config, "SOURCE_PROVIDER", {})
+    future = getattr(config, "SOURCE_FUTURE", {})
+    lk = _log_lookup(log)
+    tf = _timeframes()
+
+    def option(key, meta, disabled=False):
+        info = _info_row(meta, key, lk, tf, with_tf=True)
+        label = html.Span(info, style={"display": "flex", "alignItems": "center",
+                                       "gap": "10px", "flex": "1"})
+        return {"label": label, "value": key, "disabled": disabled}
+
+    options = [option(k, m) for k, m in sp.items()]
+    options += [option(f"future:{k}", m, disabled=True)
+                for k, m in future.items()]
+
+    controls = html.Div([
+        html.Button("Select all", id="pull-select-all", n_clicks=0,
+                    className="emd-btn emd-btn--ghost"),
+        html.Button("Clear", id="pull-select-none", n_clicks=0,
+                    className="emd-btn emd-btn--ghost"),
+        html.Span("Pull timeframe", className="emd-ctrl-label",
+                  style={"marginLeft": "16px"}),
+        dcc.Dropdown(id="pull-since", clearable=False, value="",
+                     persistence=True, persistence_type="local",
+                     style={"width": "150px"},
+                     options=[{"label": l, "value": v} for l, v in TIMEFRAME_OPTS]),
+        dcc.Checklist(
+            id="pull-trim",
+            options=[{"label": " Trim older rows to timeframe", "value": "on"}],
+            value=[], className="emd-check",
+            persistence=True, persistence_type="local",
+            style={"marginLeft": "8px"}),
+        html.Span("market/price sources only \u00b7 macro pulls full history "
+                  "\u00b7 trim DELETES rows older than the window",
+                  style={"fontSize": "10.5px", "color": P["muted"],
+                         "fontStyle": "italic", "marginLeft": "10px"}),
+    ], style={"display": "flex", "alignItems": "center", "gap": "8px",
+              "flexWrap": "wrap", "marginBottom": "12px"})
+
+    checklist = dcc.Checklist(
+        id="pull-sources", options=options, value=list(sp.keys()),
+        persistence=True, persistence_type="local",
+        inputStyle={"marginRight": "10px", "marginTop": "2px"},
+        labelStyle={"display": "flex", "alignItems": "flex-start",
+                    "padding": "7px 0", "borderBottom": f"1px solid {P['border']}"},
+        style={"display": "block"})
+
+    actions = html.Div([
+        html.Button("\u21bb  Pull selected", id="btn-pull-selected", n_clicks=0,
+                    style={"background": P["gold"], "color": "#fff", "border": "none",
+                           "borderRadius": "8px", "padding": "8px 16px",
+                           "fontWeight": 700, "fontSize": "13px", "cursor": "pointer",
+                           "fontFamily": config.FONTS["ui"]}),
+        html.Span(id="stat-pull-selected"),
+    ], style={"display": "flex", "alignItems": "center", "gap": "10px",
+              "marginTop": "14px"})
+
+    return html.Div([controls, _table_header(True, True), checklist, actions])
+
+
+_NEWS_ROWS = {
+    "rss": {"label": "RSS / Atom feeds", "provider": "60+ outlets",
+            "kind": "open", "freq": "Continuous",
+            "note": "Central banks, wires, local EM outlets (last day or two)",
+            "log": "rss_all"},
+    "gdelt": {"label": "GDELT", "provider": "GDELT Project",
+              "kind": "open", "freq": "15 min",
+              "note": "Per-country news search across the global press",
+              "log": "gdelt"},
+}
+
+
+def news_panel(log=None):
+    lk = _log_lookup(log)
+    rows = []
+    for key, meta in _NEWS_ROWS.items():
+        cells = _info_row(meta, key, lk, {}, with_tf=False)
+        rows.append(html.Div(cells, style={
+            "display": "flex", "alignItems": "center", "gap": "10px",
+            "padding": "7px 0", "borderBottom": f"1px solid {P['border']}"}))
+
+    actions = html.Div([
+        news_since(),
+        _button("pull-rss"), _button("pull-gdelt"), _button("prune-news"),
+    ], style={"display": "flex", "alignItems": "center", "gap": "10px",
+              "flexWrap": "wrap", "marginTop": "14px"})
+
+    return html.Div([_table_header(False, False),
+                     html.Div(rows), actions])
 
 
 def status_store():
-    # interval starts DISABLED -> zero polling / zero flicker when idle.
     return html.Div([
         dcc.Store(id="runner-store"),
         dcc.Interval(id="runner-poll", interval=2000, n_intervals=0,
@@ -313,6 +468,8 @@ def status_store():
 
 def register(app):
     for jid in JOBS:
+        if JOBS[jid].get("custom"):
+            continue
         uses_since = JOBS[jid].get("uses_since", False)
         states = [State("news-since", "value")] if uses_since else []
 
@@ -323,17 +480,14 @@ def register(app):
             if not n_clicks:
                 return no_update
             with _lock:
-                busy = _any_running()
-            if busy:
-                return no_update
+                if _any_running():
+                    return no_update
             since = extra[0] if (_uses and extra) else None
             _launch(_jid, since=since)
             snap = _status_snapshot()
             _last_snap["v"] = snap
             return snap
 
-    # poll: only push a new store value when the snapshot actually CHANGED,
-    # so a steady "Running..." does not churn the page every 2 seconds.
     @app.callback(Output("runner-store", "data"),
                   Input("runner-poll", "n_intervals"))
     def _poll(_n):
@@ -343,7 +497,6 @@ def register(app):
         _last_snap["v"] = snap
         return snap
 
-    # enable the interval while a job runs; disable (stop polling) when idle.
     @app.callback(Output("runner-poll", "disabled"),
                   Input("runner-store", "data"))
     def _toggle(_data):
@@ -354,21 +507,31 @@ def register(app):
     @app.callback(outputs, Input("runner-store", "data"))
     def _render(data):
         data = data or _status_snapshot()
-        return [_status_pill(jid, data.get(jid, {"status": "idle"}))
-                for jid in JOBS]
+        return [_status_pill(jid, data.get(jid, {"status": "idle"})) for jid in JOBS]
 
+    @app.callback(Output("pull-sources", "value"),
+                  Input("pull-select-all", "n_clicks"),
+                  Input("pull-select-none", "n_clicks"),
+                  prevent_initial_call=True)
+    def _select_all(_a, _b):
+        trig = (callback_context.triggered[0]["prop_id"].split(".")[0]
+                if callback_context.triggered else "")
+        if trig == "pull-select-none":
+            return []
+        return list(getattr(config, "SOURCE_PROVIDER", {}))
 
-# ===================================================================
-# WIRE INTO app.py:
-#   import runner
-#   ... after server = app.server:   runner.register(app)
-#   ... in serve_layout() after dcc.Store(id="_persist_sink"):
-#         runner.status_store(),
-#   ... News tab FETCH row -- change the buttons_bar call to the split buttons:
-#         runner.news_since(),
-#         runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"]),
-#   SQLite Store buttons render inside database_tab (imports runner) and use
-#     ["pull-markets", "pull-macro", "pull-all"] -- unchanged.
-#
-# Optional config: NEWS_PRUNE_DAYS = 90.
-# ===================================================================
+    @app.callback(Output("runner-store", "data", allow_duplicate=True),
+                  Input("btn-pull-selected", "n_clicks"),
+                  State("pull-sources", "value"), State("pull-since", "value"),
+                  State("pull-trim", "value"),
+                  prevent_initial_call=True)
+    def _go_selected(n_clicks, sources, since, trim):
+        if not n_clicks:
+            return no_update
+        with _lock:
+            if _any_running():
+                return no_update
+        _launch_custom(sources or [], since=since, trim=bool(trim))
+        snap = _status_snapshot()
+        _last_snap["v"] = snap
+        return snap

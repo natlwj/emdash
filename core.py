@@ -453,6 +453,29 @@ def dedupe_news(db_path=None) -> int:
     return before - after
 
 
+def trim_before(table: str, cutoff: str, series_col: str = None,
+                series_vals=None, date_col: str = "date", db_path=None) -> int:
+    """Delete rows in `table` dated before `cutoff` (YYYY-MM-DD).
+    Optionally restrict to series_col IN series_vals (so trimming 'globals'
+    doesn't touch 'fred' rows that share global_market). Returns rows deleted."""
+    if not cutoff:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        if series_col and series_vals:
+            ph = ",".join(["?"] * len(series_vals))
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE {date_col} < ? "
+                f"AND {series_col} IN ({ph})", (cutoff, *series_vals))
+        else:
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE {date_col} < ?", (cutoff,))
+        conn.commit()
+        n = cur.rowcount
+    finally:
+        conn.close()
+    return n
+
 if __name__ == "__main__":
     init_db()
     print("[core] table counts:", table_counts())

@@ -51,6 +51,7 @@ import argparse
 import datetime as dt
 import io
 import json as _json
+import os
 import time
 
 import pandas as pd
@@ -68,7 +69,8 @@ RETRIES = 2
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 EMDASH-ingest/3.1")
 
-MARKET_START = getattr(config, "MARKET_START", "1950-01-01")
+MARKET_START = (os.getenv("EMDASH_MARKET_START")
+                or getattr(config, "MARKET_START", "1950-01-01"))
 MACRO_START_YEAR = int(getattr(config, "MACRO_START_YEAR", 1960))
 
 

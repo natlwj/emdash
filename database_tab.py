@@ -1,30 +1,21 @@
 """
-EMDASH :: database_tab.py   (v6)  -- the "SQLite Store" tab
+EMDASH :: database_tab.py   (v8)  -- the "SQLite Store" tab
 
-Live map of emdash.sqlite: coverage matrices, freshness, a redesigned + sortable
-NEWS sources panel, warm-cache + render-cache for speed, per-section PULL buttons.
+Live map of emdash.sqlite: a slim stats strip, two pull panels (News + Data),
+the news-source coverage table, and macro/market/gauge coverage matrices.
 
-v6 CHANGES (UI overhaul, round 2)
-  - SECTIONS ARE NOW ISLANDS. Every section (Freshness & Pulls, News, Macro,
-    Market, Gauges/Commodities) sits in a light-grey panel with a header banner
-    (gold accent + hairline). The inner white cards/tables pop against the grey,
-    so each block reads as one self-contained unit. Uniform margins throughout.
-  - NEWS MOVED ABOVE MACRO (order: tiles -> freshness -> news -> macro -> market
-    -> gauges/commodities).
-  - FRESHNESS CARDS carry a summary line: status dot + "N sources . last pull
-    Xd ago", so each card says something at a glance.
-  - NEWS SOURCE BARS EXCLUDE GDELT from the scale (gdelt is the firehose and
-    dwarfs everyone). Bars now scale to the largest NON-gdelt source; gdelt gets
-    a distinct gold bar + a footnote. Sub-sources inside gdelt can't be split.
-  - NEWS SOURCES ARE SORTABLE: a "Sort by" dropdown (Headlines / Tier / Source /
-    Most recent / Oldest coverage) re-renders the table via a small callback.
-
-v5: freshness moved to top + grouped; source table redesigned; width caps.
-v4: richer news panel + pull buttons + friendly names. v3: warm+render cache.
+v8
+  - Freshness & pulls strip REMOVED. Last-pull dates now live inside the two
+    pull panels (runner.news_panel / runner.data_panel), so there is one place
+    for every pull and no duplicated buttons.
+  - Sections: stats -> News Pull Panel -> Data Pull Panel -> News sources ->
+    Macro -> Market -> Gauges/Commodities.
+  - Copy tightened (dropped the verbose coverage-map blurb).
 """
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pandas as pd
 from dash import dcc, html, Input, Output
@@ -32,7 +23,10 @@ from dash import dcc, html, Input, Output
 import config
 import core
 
-import json
+try:
+    import runner
+except Exception:
+    runner = None
 
 _STATE_PATH = config.ROOT / "emdash_state.json"
 
@@ -56,11 +50,6 @@ def _save_state(key, value) -> None:
         pass
 
 
-try:
-    import runner
-except Exception:                       # runner optional; tab still renders
-    runner = None
-
 P = config.PALETTE
 _LABELS = getattr(config, "INDICATOR_LABELS", {})
 
@@ -69,15 +58,8 @@ _MACRO_ORDER = list(getattr(config, "WB_INDICATORS", {})) + \
 _MARKET_ORDER = ["FX", "EQUITY", "Y2", "Y5", "Y10", "Y30", "FX_FRED"]
 _FRESH_DAYS, _STALE_DAYS = 30, 90
 
-# freshness grouping: which ingest_log source_ids belong to which category
-_NEWS_SRC = {"rss_all", "rss", "gdelt", "news", "news_rss"}
-_MACRO_SRC = {"worldbank", "dbnomics"}
-# everything else (yahoo_*, fred, fred_fx, yields, stooq, predmarket) = markets
-
-# per-feed tier lookup for the news source table (gdelt has no RSS row -> C)
 _FEED_TIER = {f[0]: f[2] for f in getattr(config, "RSS_FEEDS", [])}
 
-# island / banner tokens (kept local so no CSS edit is needed)
 _ISLAND_BG = "#F4F6FA"
 _BANNER_BG = "#EAEFF7"
 
@@ -96,32 +78,7 @@ def _days_since(date_str):
         return None
 
 
-def _fresh_color(days):
-    if days is None:
-        return P["muted"]
-    if days <= 7:
-        return P["good"]
-    if days <= 30:
-        return "#8A6D1B"
-    return P["bad"]
-
-
-def _rel_days(days):
-    if days is None:
-        return "never"
-    if days <= 0:
-        return "today"
-    if days == 1:
-        return "yesterday"
-    if days < 30:
-        return f"{days}d ago"
-    if days < 365:
-        return f"{days // 30}mo ago"
-    return f"{days // 365}y ago"
-
-
 def _short_span(first, last):
-    """'2026-07-27','2026-08-09' -> 'Jul 27 -> Aug 09' (drops year when shared)."""
     try:
         a = pd.to_datetime(first)
         b = pd.to_datetime(last)
@@ -133,11 +90,9 @@ def _short_span(first, last):
 
 
 # ===================================================================
-# SECTION ISLAND  (light panel + header banner)
+# SECTION ISLAND
 # ===================================================================
 def _section(title, body, subtitle=None, right=None):
-    """Wrap a section in a light-grey island with a header banner so each block
-    reads as one self-contained unit."""
     head_left = [html.Span(title, style={
         "fontSize": "12px", "fontWeight": 700, "letterSpacing": ".6px",
         "textTransform": "uppercase", "color": P["navy1"]})]
@@ -163,12 +118,11 @@ def _section(title, body, subtitle=None, right=None):
 
 
 # ===================================================================
-# COVERAGE MATRIX  (unchanged behaviour)
+# COVERAGE MATRIX
 # ===================================================================
 def _cell(n, first, last, source, daily=False):
     if not n or n == 0:
-        return html.Td("\u00b7", style={"color": "#C9CED8",
-                                        "textAlign": "center"})
+        return html.Td("\u00b7", style={"color": "#C9CED8", "textAlign": "center"})
     title = f"{n:,} rows | {str(first)[:10]} -> {str(last)[:10]} | {source}"
     bg, fg = "#EAF0F9", P["navy1"]
     if daily:
@@ -188,7 +142,7 @@ def _cell(n, first, last, source, daily=False):
 def _matrix(cov, scope, field_order, daily=False):
     sub = cov[cov["scope"] == scope]
     if sub.empty:
-        return html.Div("No data yet in this scope - run a Pull.",
+        return html.Div("No data yet - run a pull above.",
                         style={"padding": "8px", "color": P["muted"]})
     idx = {(r["key"], r["field"]): r for _, r in sub.iterrows()}
     present = list(dict.fromkeys(
@@ -224,14 +178,10 @@ def _matrix(cov, scope, field_order, daily=False):
                "borderRadius": "10px", "padding": "4px 8px"})
 
 
-# ===================================================================
-# SIMPLE SERIES LIST  (global gauges / commodities)
-# ===================================================================
 def _simple_list(cov, scope, label):
     sub = cov[cov["scope"] == scope].sort_values("field")
     if sub.empty:
-        return html.Div("None yet.", style={"color": P["muted"],
-                                             "padding": "8px",
+        return html.Div("None yet.", style={"color": P["muted"], "padding": "8px",
                                              "fontSize": "12px"})
     body = []
     for _, r in sub.iterrows():
@@ -252,86 +202,7 @@ def _simple_list(cov, scope, label):
 
 
 # ===================================================================
-# FRESHNESS & PULLS  (grouped NEWS / MACRO / MARKETS, each an inner card)
-# ===================================================================
-def _fresh_rows(sub):
-    lines = []
-    for _, r in sub.sort_values("last_run", ascending=False).iterrows():
-        ds = _days_since(str(r["last_run"])[:10])
-        col = _fresh_color(ds)
-        rows_txt = (f"+{int(r['rows']):,}" if pd.notna(r["rows"]) else "-")
-        lines.append(html.Div([
-            html.Span(str(r["source_id"]),
-                      style={"fontWeight": 600, "color": P["ink"]}),
-            html.Span(str(r["last_run"])[:16],
-                      style={"color": col, "marginLeft": "auto",
-                             "fontVariantNumeric": "tabular-nums"}),
-            html.Span(rows_txt, style={"color": P["muted"], "width": "64px",
-                                       "textAlign": "right",
-                                       "fontVariantNumeric": "tabular-nums"}),
-        ], style={"display": "flex", "gap": "10px", "fontSize": "11px",
-                  "padding": "3px 0",
-                  "borderBottom": f"1px solid {P['border']}"}))
-    return html.Div(lines)
-
-
-def _fresh_card(title, log, keep, button_ids, news_hint=False):
-    sub = (log[log["source_id"].isin(keep)]
-           if (log is not None and not log.empty) else pd.DataFrame())
-    n_src = len(sub)
-    if n_src:
-        last_run = sub["last_run"].max()
-        ds = _days_since(str(last_run)[:10])
-    else:
-        ds = None
-    dot = html.Span(style={"display": "inline-block", "width": "8px",
-                           "height": "8px", "borderRadius": "50%",
-                           "background": _fresh_color(ds),
-                           "marginRight": "7px"})
-    summary = (f"{n_src} source{'s' if n_src != 1 else ''} \u00b7 "
-               f"last pull {_rel_days(ds)}" if n_src else "no pulls logged yet")
-
-    kids = [
-        html.Div([dot, html.Span(title, style={
-            "fontSize": "11px", "fontWeight": 700, "letterSpacing": ".5px",
-            "textTransform": "uppercase", "color": P["navy1"]})],
-            style={"display": "flex", "alignItems": "center"}),
-        html.Div(summary, style={"fontSize": "10.5px", "color": P["muted"],
-                                 "margin": "2px 0 8px"}),
-        _fresh_rows(sub) if n_src else html.Span(),
-    ]
-    if runner is not None and button_ids:
-        kids.append(html.Div(runner.buttons_bar(button_ids),
-                             style={"marginTop": "10px"}))
-    elif news_hint:
-        kids.append(html.Div("pull from the News Feed tab",
-                             style={"marginTop": "10px", "fontSize": "10.5px",
-                                    "color": P["muted"], "fontStyle": "italic"}))
-    return html.Div(kids, style={
-        "flex": "1 1 300px", "maxWidth": "400px", "minWidth": "260px",
-        "background": P["card"], "border": f"1px solid {P['border']}",
-        "borderRadius": "10px", "padding": "12px 14px",
-        "boxShadow": "0 1px 2px rgba(31,73,125,.05)"})
-
-
-def _freshness_strip(log):
-    markets_keep = set()
-    if log is not None and not log.empty:
-        markets_keep = set(log["source_id"]) - _NEWS_SRC - _MACRO_SRC
-    return html.Div([
-        _fresh_card("News", log, _NEWS_SRC, None, news_hint=True),
-        _fresh_card("Macro", log, _MACRO_SRC,
-                    ["pull-macro", "pull-worldbank", "pull-dbnomics"]),
-        _fresh_card("Markets", log, markets_keep,
-                    ["pull-markets", "pull-fx", "pull-equities", "pull-yields",
-                     "pull-commodities", "pull-globals", "pull-fred",
-                     "pull-all"]),
-    ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap",
-              "alignItems": "stretch"})
-
-
-# ===================================================================
-# NEWS SOURCES  (sortable table; bars exclude gdelt from the scale)
+# NEWS SOURCES  (sortable table)
 # ===================================================================
 _SORT_OPTS = [
     {"label": "Headlines (high \u2192 low)", "value": "headlines"},
@@ -354,7 +225,7 @@ def _sort_sources(df, how):
         return df.sort_values("last", ascending=False)
     if how == "oldest":
         return df.sort_values("first")
-    return df.sort_values("n", ascending=False)   # headlines (default)
+    return df.sort_values("n", ascending=False)
 
 
 def _news_source_table(by_source, how="headlines"):
@@ -362,7 +233,6 @@ def _news_source_table(by_source, how="headlines"):
         return html.Div("No sources yet.", style={"color": P["muted"],
                                                    "padding": "8px"})
     df = _sort_sources(by_source, how)
-    # bar scale IGNORES gdelt (the firehose) so smaller sources stay meaningful
     non_g = df[df["source_id"] != "gdelt"]["n"]
     max_n = int(non_g.max()) if len(non_g) else int(df["n"].max())
     max_n = max(max_n, 1)
@@ -377,8 +247,7 @@ def _news_source_table(by_source, how="headlines"):
         pct = 100 if is_gdelt else max(3, min(100, int(round(100 * n / max_n))))
         bar_col = P["gold"] if is_gdelt else P["navy3"]
         chip = html.Span(tier, className=f"emd-tier emd-tier--{tcls}",
-                         title=f"Source Tier {tier}",
-                         style={"marginRight": "8px"})
+                         title=f"Source Tier {tier}", style={"marginRight": "8px"})
         bar_inner = html.Div(style={"width": f"{pct}%", "height": "8px",
                                     "borderRadius": "4px", "background": bar_col})
         bar = html.Div(bar_inner, style={"background": "#EEF1F6",
@@ -391,8 +260,7 @@ def _news_source_table(by_source, how="headlines"):
                          "fontSize": "9.5px", "color": P["gold"],
                          "marginLeft": "6px", "fontWeight": 700}) if is_gdelt
                       else html.Span())],
-                    style={"whiteSpace": "nowrap",
-                           "padding": "6px 10px 6px 0"}),
+                    style={"whiteSpace": "nowrap", "padding": "6px 10px 6px 0"}),
             html.Td(bar, style={"width": "230px", "padding": "6px 10px"}),
             html.Td(f"{n:,}", style={"textAlign": "right", "width": "64px",
                                      "color": P["ink"], "fontWeight": 600,
@@ -416,7 +284,7 @@ def _news_source_table(by_source, how="headlines"):
                        style={"width": "100%", "borderCollapse": "collapse",
                               "fontSize": "12.5px"})
     note = html.Div("* bars scale to the largest non-GDELT source; GDELT is the "
-                    "firehose (its sub-sources can't be split).",
+                    "firehose and can't be split by sub-source.",
                     style={"fontSize": "10.5px", "color": P["muted"],
                            "fontStyle": "italic", "marginTop": "8px"})
     return html.Div([html.Div(table, style={"maxWidth": "660px"}), note])
@@ -435,9 +303,8 @@ def _dead_feed_box(dead):
                  style={"fontSize": "11px", "fontWeight": 700,
                         "color": "#8A6D1B", "marginBottom": "4px"}),
         html.Div(chips),
-        html.Div("Newly-added feeds sit here until their first pull; the rest "
-                 "are likely a bad URL or blocked on this network. Run "
-                 "`python news_ingest.py --only rss` and re-check.",
+        html.Div("New feeds sit here until their first pull; the rest are likely "
+                 "a bad URL or blocked on this network.",
                  style={"fontSize": "10.5px", "color": P["muted"],
                         "fontStyle": "italic", "marginTop": "5px"}),
     ], style={"maxWidth": "660px", "background": "#FCFAF3",
@@ -454,27 +321,22 @@ def _news_stats_line(nc):
     desk = nc.get("by_desk", {})
 
     head = html.Div([
-        html.Span(f"{total:,} headlines",
-                  style={"fontWeight": 700, "color": P["navy1"],
-                         "fontSize": "14px"}),
-        html.Span(f"{span[0]} \u2192 {span[1]}",
-                  style={"color": P["muted"], "fontSize": "11.5px",
-                         "marginLeft": "10px"}),
+        html.Span(f"{total:,} headlines", style={"fontWeight": 700,
+                  "color": P["navy1"], "fontSize": "14px"}),
+        html.Span(f"{span[0]} \u2192 {span[1]}", style={"color": P["muted"],
+                  "fontSize": "11.5px", "marginLeft": "10px"}),
         html.Span(f"A:{tier.get('A', 0):,}  B:{tier.get('B', 0):,}  "
-                  f"C:{tier.get('C', 0):,}",
-                  style={"color": P["muted"], "fontSize": "11.5px",
-                         "marginLeft": "14px",
-                         "fontVariantNumeric": "tabular-nums"}),
-        html.Span(f"tagged {pct}%",
-                  style={"color": P["good"], "fontWeight": 700,
-                         "fontSize": "11.5px", "marginLeft": "14px"}),
-        html.Span(f"({tagged:,}/{total:,})",
-                  style={"color": P["muted"], "fontSize": "11px",
-                         "marginLeft": "4px"}),
+                  f"C:{tier.get('C', 0):,}", style={"color": P["muted"],
+                  "fontSize": "11.5px", "marginLeft": "14px",
+                  "fontVariantNumeric": "tabular-nums"}),
+        html.Span(f"tagged {pct}%", style={"color": P["good"], "fontWeight": 700,
+                  "fontSize": "11.5px", "marginLeft": "14px"}),
+        html.Span(f"({tagged:,}/{total:,})", style={"color": P["muted"],
+                  "fontSize": "11px", "marginLeft": "4px"}),
     ], style={"marginBottom": "8px"})
 
-    chips = [html.Span("By desk:", style={"fontSize": "10.5px",
-             "fontWeight": 700, "color": P["navy2"], "marginRight": "6px",
+    chips = [html.Span("By desk:", style={"fontSize": "10.5px", "fontWeight": 700,
+             "color": P["navy2"], "marginRight": "6px",
              "textTransform": "uppercase", "letterSpacing": ".4px"})]
     for d in list(config.DESK_LABELS) + ["(no desk)"]:
         if d not in desk:
@@ -491,9 +353,9 @@ def _news_stats_line(nc):
     return html.Div([head, html.Div(chips, style={"marginBottom": "4px"})])
 
 
-def _news_panel(nc):
+def _news_coverage_panel(nc):
     if not nc or nc.get("total", 0) == 0:
-        return html.Div("No news yet - pull from the News Feed tab.",
+        return html.Div("No news yet - pull it in the News Pull Panel above.",
                         style={"color": P["muted"], "padding": "8px"})
     return html.Div([
         _news_stats_line(nc),
@@ -512,7 +374,7 @@ def _news_sort_control():
                                     "textTransform": "uppercase",
                                     "color": P["navy2"], "marginRight": "8px"}),
         dcc.Dropdown(id="news-src-sort",
-                    value=_load_state().get("news_src_sort", "headlines"),
+                     value=_load_state().get("news_src_sort", "headlines"),
                      clearable=False, options=_SORT_OPTS,
                      persistence=True, persistence_type="local",
                      style={"width": "210px"}),
@@ -520,7 +382,7 @@ def _news_sort_control():
 
 
 # ===================================================================
-# SUMMARY TILES  (unchanged)
+# STATS STRIP
 # ===================================================================
 def _tiles(counts, cov):
     def tile(label, value):
@@ -529,13 +391,13 @@ def _tiles(counts, cov):
                         className="emd-stat")
     n_countries = cov[cov["scope"].isin(["macro", "market"])]["key"].nunique()
     return html.Div([
-        tile("MACRO ROWS", f"{counts.get('macro_data', 0):,}"),
-        tile("MARKET ROWS", f"{counts.get('market_data', 0):,}"),
-        tile("GLOBAL ROWS", f"{counts.get('global_market', 0):,}"),
-        tile("COMMODITY", f"{counts.get('commodity_data', 0):,}"),
-        tile("NEWS", f"{counts.get('news', 0):,}"),
-        tile("PRED-MKT", f"{counts.get('predmarket_data', 0):,}"),
-        tile("COUNTRIES w/ DATA", f"{n_countries}"),
+        tile("Macro rows", f"{counts.get('macro_data', 0):,}"),
+        tile("Market rows", f"{counts.get('market_data', 0):,}"),
+        tile("Global rows", f"{counts.get('global_market', 0):,}"),
+        tile("Commodity rows", f"{counts.get('commodity_data', 0):,}"),
+        tile("News rows", f"{counts.get('news', 0):,}"),
+        tile("Pred-market", f"{counts.get('predmarket_data', 0):,}"),
+        tile("Countries w/ data", f"{n_countries}"),
     ], className="emd-stat-row")
 
 
@@ -563,17 +425,24 @@ def _render(cov, counts, log, news):
             style={"flex": "0 1 440px", "maxWidth": "440px", "minWidth": "0"}),
     ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"})
 
+    news_body = (runner.news_panel(log) if runner is not None
+                 else html.Span("runner.py not available"))
+    data_body = (runner.data_panel(log) if runner is not None
+                 else html.Span("runner.py not available"))
+
     return html.Div([
         _tiles(counts, cov),
-        _section("Freshness & pulls", _freshness_strip(log),
-                 subtitle="when each layer last updated"),
-        _section("News \u00b7 sources in the warehouse", _news_panel(news),
+        _section("News Pull Panel", news_body,
+                 subtitle="fetch headlines into the warehouse"),
+        _section("Data Pull Panel", data_body,
+                 subtitle="tick sources, choose a timeframe, pull"),
+        _section("News sources in the warehouse", _news_coverage_panel(news),
                  right=_news_sort_control()),
-        _section("Macro", _matrix(cov, "macro", _MACRO_ORDER, daily=False),
-                 subtitle="country \u00d7 indicator \u00b7 number = observations"),
-        _section("Market", _matrix(cov, "market", _MARKET_ORDER, daily=True),
-                 subtitle="country \u00d7 series \u00b7 number = daily rows \u00b7 "
-                          "colour = freshness"),
+        _section("Macro coverage", _matrix(cov, "macro", _MACRO_ORDER, daily=False),
+                 subtitle="country \u00d7 indicator \u00b7 cell = observations"),
+        _section("Market coverage", _matrix(cov, "market", _MARKET_ORDER, daily=True),
+                 subtitle="daily rows \u00b7 colour = freshness "
+                          "(green <30d, amber <90d, red stale)"),
         _section("Global gauges & commodities", gauges_commodities),
     ], style={"paddingBottom": "24px"})
 
@@ -582,8 +451,7 @@ def warm_cache():
     try:
         cov, counts, log, news = _compute()
         _CACHE.update({"cov": cov, "counts": counts, "log": log, "news": news,
-                       "rendered": _render(cov, counts, log, news),
-                       "clicks": 0})
+                       "rendered": _render(cov, counts, log, news), "clicks": 0})
     except Exception:
         pass
 
@@ -593,26 +461,14 @@ def tab():
         label="SQLite Store", value="database", className="emd-tab",
         selected_className="emd-tab--selected", children=[
             html.Div([
-                html.Div([
-                    html.Span("What's inside emdash.sqlite - live coverage map",
-                              className="emd-es-modelabel"),
-                    html.Button("Refresh", id="db-refresh", n_clicks=0,
-                                className="emd-btn",
-                                style={"marginLeft": "12px"}),
-                ]),
-                html.Div([
-                    html.B("Each number = rows that series holds. "),
-                    "Hover any cell for its date span + source. ",
-                    html.B("Market colours"), " = freshness: ",
-                    html.Span("green", style={"color": P["good"],
-                                              "fontWeight": 700}), " <30d, ",
-                    html.Span("amber", style={"color": "#8A6D1B",
-                                              "fontWeight": 700}), " <90d, ",
-                    html.Span("red", style={"color": P["bad"],
-                                            "fontWeight": 700}),
-                    " stale.  \u00b7 = none.",
-                ], className="emd-s-hint", style={"marginTop": "6px"}),
-            ], className="emd-es-moderow", style={"padding": "12px 16px"}),
+                html.Span("Local warehouse \u00b7 emdash.sqlite",
+                          style={"fontSize": "12px", "fontWeight": 600,
+                                 "color": P["muted"]}),
+                html.Button("Refresh", id="db-refresh", n_clicks=0,
+                            className="emd-btn"),
+            ], style={"display": "flex", "alignItems": "center",
+                      "justifyContent": "space-between",
+                      "padding": "12px 16px"}),
             dcc.Loading(html.Div(id="db-body"), type="default",
                         color=P["navy2"]),
         ])
@@ -637,7 +493,6 @@ def register(app):
                        "rendered": rendered, "clicks": clicks})
         return rendered
 
-    # sort the news-source table without recomputing the whole tab
     @app.callback(Output("news-src-body", "children"),
                   Input("news-src-sort", "value"),
                   prevent_initial_call=True)

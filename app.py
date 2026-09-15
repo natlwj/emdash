@@ -139,6 +139,9 @@ NAME_BY_ISO = {i: n for i, n, *_ in config.COUNTRIES}
 DESK_BY_ISO = {i: d for i, n, d, *_ in config.COUNTRIES}
 
 FX_ISOS = [i for i, n, d, dm, fx in config.COUNTRIES if fx or i == "USA"]
+G10_FX = set(getattr(config, "G10_FX_ISOS",
+                     ["USA", "EMU", "GBR", "JPN", "CAN",
+                      "AUS", "NZL", "CHE", "NOR", "SWE"]))
 
 DESK_SHORT = {d: d for d in config.DESK_LABELS}
 DESK_ORDER = list(config.DESK_LABELS)
@@ -775,9 +778,13 @@ def macro_fig(isos, indicator, transform, normalise=False, rng="Max",
 
 
 def fx_fig(isos, transform, normalise=False, rng="Max"):
-    isos = _as_iso_list(isos)
+    isos = [i for i in _as_iso_list(isos) if i in G10_FX]
+    if not isos:
+        return _empty(_fig(ytitle="LCY per USD"),
+                      "FX chart is limited to G10 for now - add a G10 country")
     multi = len(isos) > 1
     pct = transform in ("YoY",) or transform.startswith("Momentum")
+
     unit = "%" if pct else "level"
     ytitle = ("Index (common start = 100)" if normalise
               else ("% change" if pct else "LCY per USD"))
@@ -1856,16 +1863,6 @@ def _tab_news():
                     className="emd-input emd-search",
                     style={"width": "200px"})),
             ], className="emd-controls"),
-
-            # ---- ROW 2: PULL controls (fetch NEW headlines from the web) ----
-            html.Div([
-                html.Span("FETCH NEW HEADLINES:", className="emd-ctrl-label",
-                          style={"color": P["navy1"], "fontWeight": 700}),
-                runner.news_since(),
-                runner.buttons_bar(["pull-rss", "pull-gdelt", "prune-news"])
-            ], className="emd-controls",
-               style={"borderTop": f"1px dashed {P['border']}",
-                      "background": "#F7F8FB"}),
 
             dcc.Loading(html.Div(id="news-board"), type="default",
                         color=P["navy2"]),

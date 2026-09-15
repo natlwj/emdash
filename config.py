@@ -394,6 +394,71 @@ SOURCES = [
     ("seed",        "Seed (Bloomberg exports)",         "market",    "A", "static"),
 ]
 
+# ===================================================================
+# PULL PANEL  ::  source registry for the SQLite Store pull panels.
+# Keys MUST match ingest.py --only keys (ingest._DISPATCH). "log" = the
+# source_id ingest.py writes to ingest_log, so the panel can show last-pull.
+# ===================================================================
+SOURCE_PROVIDER = {
+    "worldbank":   {"label": "World Bank macro",   "provider": "World Bank",
+                    "kind": "open", "freq": "Annual",
+                    "note": "GDP, CPI, govt debt, reserves, current account (WDI)",
+                    "log": "worldbank"},
+    "dbnomics":    {"label": "IMF macro",          "provider": "IMF / DBnomics",
+                    "kind": "open", "freq": "Monthly",
+                    "note": "Policy rate, CPI index, reserves, trade, IP, M2 (IFS)",
+                    "log": "dbnomics"},
+    "yahoo_fx":    {"label": "FX spot",            "provider": "Yahoo Finance",
+                    "kind": "open", "freq": "Daily",
+                    "note": "USD spot exchange rates, per country",
+                    "log": "yahoo_fx"},
+    "equities":    {"label": "Equity indices",     "provider": "Yahoo Finance",
+                    "kind": "open", "freq": "Daily",
+                    "note": "Benchmark stock indices (~40 markets)",
+                    "log": "yahoo_eq"},
+    "stooq_eq":    {"label": "Equity indices \u2013 gaps", "provider": "Stooq",
+                    "kind": "open", "freq": "Daily",
+                    "note": "Indices Yahoo lacks (Poland, Czech, Hungary, Qatar...)",
+                    "log": "stooq_eq"},
+    "yields":      {"label": "Sovereign yields",   "provider": "FRED",
+                    "kind": "open", "freq": "Daily",
+                    "note": "Govt bond yields 2Y/5Y/10Y/30Y (~20 countries)",
+                    "log": "yields"},
+    "commodities": {"label": "Commodities",        "provider": "Yahoo Finance",
+                    "kind": "open", "freq": "Daily",
+                    "note": "Brent, WTI, gold, copper, iron ore, grains...",
+                    "log": "yahoo_cmdty"},
+    "globals":     {"label": "Risk gauges",        "provider": "Yahoo Finance",
+                    "kind": "open", "freq": "Daily",
+                    "note": "DXY, VIX, MOVE, SPX, BTC, US Treasury curve",
+                    "log": "yahoo_glob"},
+    "fred":        {"label": "Credit spreads",     "provider": "FRED",
+                    "kind": "open", "freq": "Daily",
+                    "note": "ICE BofA OAS: IG, HY, EM sovereign & corporate",
+                    "log": "fred"},
+    "fred_fx":     {"label": "FX \u2013 deep history", "provider": "FRED",
+                    "kind": "open", "freq": "Daily",
+                    "note": "Long-history daily FX (pre-Yahoo backfill)",
+                    "log": "fred_fx"},
+    "predmarkets": {"label": "Prediction markets", "provider": "Polymarket",
+                    "kind": "open", "freq": "Daily snapshot",
+                    "note": "Top markets by volume; accrues a probability series",
+                    "log": "predmarkets"},
+}
+SOURCE_FUTURE = {
+    "cds":    {"label": "Sovereign CDS", "provider": "Bloomberg",
+               "kind": "bloomberg", "freq": "Daily",
+               "note": "5Y sovereign CDS spreads (planned, via BQL)", "log": None},
+    "curves": {"label": "Rates / swap curves", "provider": "Bloomberg",
+               "kind": "bloomberg", "freq": "Daily",
+               "note": "Full sovereign & swap curves (planned)", "log": None},
+    "fxfwd":  {"label": "FX forwards", "provider": "Bloomberg",
+               "kind": "bloomberg", "freq": "Daily",
+               "note": "FX forward points / NDFs (planned)", "log": None},
+}
+BLOOMBERG_ORANGE = "#FFA028"
+
+
 INDICATOR_LABELS = {
     "GDP_YOY": "GDP growth (% YoY)",
     "CPI_YOY": "Inflation (CPI % YoY)",
@@ -577,7 +642,9 @@ MRC_MIN_MARGIN = 2.0
 # Which countries appear in the "Key policy rates at a glance" strip
 # (Indicator Comparison tab). Edit freely - these are iso3 codes.
 KEY_RATE_ISOS = ["USA", "EMU", "GBR", "JPN", "CHN", "IND", "BRA", "IDN", "ZAF"]
-
+# FX chart in Indicator Comparison is limited to these (G10) for now.
+G10_FX_ISOS = ["USA", "EMU", "GBR", "JPN", "CAN",
+               "AUS", "NZL", "CHE", "NOR", "SWE"]
 # ===================================================================
 # NEWS LAYER
 # ===================================================================
