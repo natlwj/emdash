@@ -710,6 +710,7 @@ def run_all(only=None, skip_market=False, refresh=False) -> None:
             print(f"[ingest] unknown --only key(s): {', '.join(unknown)}")
             print(f"[ingest] valid keys: {', '.join(_DISPATCH)}")
             return
+    ran_keys = []
     for key, (flag, fn, default) in _DISPATCH.items():
         if only and key not in only:
             continue
@@ -721,6 +722,8 @@ def run_all(only=None, skip_market=False, refresh=False) -> None:
             fn(replace=refresh)
         else:
             fn(skip_existing=skip_existing, replace=refresh)
+        ran_keys.append(key)
+    _trim_pass(ran_keys)
     print("[ingest] table counts:", core.table_counts())
     print("[ingest] done.")
 
