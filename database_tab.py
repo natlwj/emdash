@@ -458,7 +458,7 @@ def warm_cache():
 
 def tab():
     return dcc.Tab(
-        label="SQLite Store", value="database", className="emd-tab",
+        label="Data Coverage & Updates", value="database", className="emd-tab",
         selected_className="emd-tab--selected", children=[
             html.Div([
                 html.Span("Local warehouse \u00b7 emdash.sqlite",

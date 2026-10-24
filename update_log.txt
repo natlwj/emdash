@@ -1,0 +1,12 @@
+ 
+================================================================ 
+[EMDASH_update] START  Tue 22/09/2026 10:41:40.39  using python 
+---------------------------------------------------------------- 
+[EMDASH_update] (1/2) news_ingest.py 
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+[EMDASH_update]     news exit code = 9009 
+[EMDASH_update] (2/2) ingest.py 
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+[EMDASH_update]     ingest exit code = 9009 
+---------------------------------------------------------------- 
+[EMDASH_update] DONE WITH ERRORS  news=9009 ingest=9009  Tue 22/09/2026 10:41:40.90 

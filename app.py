@@ -1,34 +1,25 @@
 """
-EMDASH :: app.py   (v7)
+EMDASH :: app.py   (v10)
 
 THE DASHBOARD. Reads ONLY through core.py; math via signals.py / event_study.py
 / mrc.py; tagging via news_ingest.py. Styling: assets/emdash.css.
 Editable settings: config.py.
 
 ==============================================================================
-WHAT CHANGED IN v7
+WHAT CHANGED IN v8
 ==============================================================================
-INDICATOR COMPARISON (formerly "Country Indicators")
-  * The tab is renamed and can now compare ANYTHING, not just countries.
-    A new "Compare series" multi-dropdown overlays commodities (cmdty:BRENT),
-    global gauges (glob:VIX / US yields) and credit spreads on the main chart,
-    using the SAME prefix scheme + _signal_series() path the Event Study tab
-    already uses (proven). Extra series are drawn DOTTED to distinguish them
-    from country lines.
-  * MIXED UNITS: CPI % vs Brent $ vs VIX level cannot share a raw axis
-    honestly, so when you add compare-series the sub-line nudges you to tick
-    Normalise (rebase to 100) -- then everything is comparable by SHAPE.
-  * FRIENDLY NAMES via config.INDICATOR_LABELS: dropdowns, titles, the grid
-    and the stat tiles now read "GDP per capita (USD)" instead of GDP_PC_USD.
+INDICATOR ANALYSIS
+  * Add/collapse/duplicate/reorder/delete workflow for up to eight series.
+  * Per-series frequency-aware transformations plus global comparison modes.
+  * World Bank, IMF SDMX CPI, Yahoo chart-market and Gembridge Excel providers.
+  * Copyable source diagnostics and separate Fetch History / Chart Period.
+  * The module never reads or writes emdash.sqlite.
 
-FIXES carried in v7 (were bugs in the running copy):
-  * removed DUPLICATE imports (core / database_tab were imported twice).
-  * removed a STALE button call (runner.buttons_bar(["update-news"])) -- that
-    job id no longer exists in runner v4 (it is "pull-news" now).
+DATA TAB LABEL
+  * The user-facing "SQLite Store" label is now "Data Coverage & Updates".
+    Its implementation and underlying SQLite functionality are unchanged.
 
-Everything else -- chart engine (_fig/_graph/chart_card), news board, event
-study, MRC -- is byte-for-byte the same behaviour as v6. Chart rendering was
-NOT touched; the comparison feature only FEEDS macro_fig extra data.
+Event Study and MRC files and rendering functions are unchanged.
 
 ------------------------------------------------------------------------------
 CARRIED OVER (v5/v6): chart height owned by _fig() only (no responsive flag);
@@ -57,6 +48,7 @@ from dash import Dash, dcc, html, Input, Output, State, ALL, MATCH
 import config
 import core
 import database_tab
+import indicator_analysis
 import runner
 import signals as sig
 
@@ -1785,9 +1777,10 @@ app = Dash(__name__, title="EMDASH")
 app.config.suppress_callback_exceptions = True
 server = app.server
 
-# wire the modular tabs / buttons, then warm the SQLite Store cache in the
+# Wire the modular tabs / buttons, then warm the local data-store cache in the
 # background so its first open is instant (see database_tab.warm_cache).
 database_tab.register(app)
+indicator_analysis.register(app)
 runner.register(app)
 threading.Thread(target=database_tab.warm_cache, daemon=True).start()
 
@@ -2089,7 +2082,7 @@ def serve_layout():
     if FLAGS.get("module_news", True):
         tabs.append(_tab_news())
     if FLAGS.get("module_country", True):
-        tabs.append(_tab_country())
+        tabs.append(indicator_analysis.tab(_STATE))
     if FLAGS.get("module_event_study", True):
         tabs.append(_tab_eventstudy())
     if FLAGS.get("module_regime_mrc", True):
@@ -2179,79 +2172,6 @@ def _news_more(n_clicks, data):
     if not n_clicks or not data:
         return None
     return [_news_card(r) for r in data]
-
-
-@app.callback(Output("macro-graph", "figure"), Output("fx-graph", "figure"),
-              Output("stat-tiles", "children"),
-              Output("macro-title", "children"),
-              Output("macro-sub", "children"),
-              Output("macro-source", "children"),
-              Output("macro-prov", "children"),
-              Output("fx-title", "children"), Output("fx-sub", "children"),
-              Output("fx-source", "children"), Output("fx-prov", "children"),
-              Input("country", "value"), Input("cmp-countries", "value"),
-              Input("indicator", "value"), Input("transform", "value"),
-              Input("normalise", "value"), Input("ctry-range", "value"),
-              Input("cmp-series", "value"))
-def _country(iso3, cmp_countries, indicator, transform, normalise, rng,
-             cmp_series):
-    _maybe_flush_caches()
-    isos = _as_iso_list([iso3] + list(cmp_countries or []))
-    norm = bool(normalise)
-    extra = list(cmp_series or [])
-    names = ", ".join(NAME_BY_ISO.get(i, i) for i in isos)
-    if extra:
-        names += " + " + ", ".join(
-            ind_label(e.split(":")[1]) for e in extra)
-    if norm:
-        rebased = "  -  rebased to 100 at the common start date"
-    elif extra:
-        rebased = "  -  mixed units: tick Normalise to compare shapes"
-    else:
-        rebased = ""
-    sub = f"{transform}{rebased}"
-    fxsub = f"{transform}" + ("  -  rebased to 100 at the common start date"
-                             if norm else "")
-    _, fxnote = fx_frame(isos[0]) if isos else (None, "LCY per USD")
-
-    # source line must list EVERY provider actually on the macro chart:
-    # the primary indicator, plus any compare-series overlaid on it.
-    macro_srcs = [source_for_indicator(indicator)]
-    for e in extra:
-        grp, _, k = e.partition(":")
-        macro_srcs.append(source_for_global(k) if grp == "glob" else SOURCE_YF)
-
-    return (macro_fig(isos, indicator, transform, norm, rng, extra=extra),
-            fx_fig(isos, transform, norm, rng),
-            stat_tiles(iso3),
-            f"{ind_label(indicator)} - {names}", sub,
-            source_line(macro_srcs),
-            _prov_chip(transform, norm),
-            f"FX ({fxnote}) - {names}", fxsub,
-            source_line(SOURCE_YF),
-            _prov_chip(transform, norm))
-
-
-@app.callback(Output("indicator-grid", "children"),
-              Input("show-grid", "value"), Input("country", "value"),
-              Input("cmp-countries", "value"), Input("transform", "value"),
-              Input("normalise", "value"), Input("grid-compare", "value"))
-def _grid(show, iso3, cmp_countries, transform, normalise, compare):
-    _maybe_flush_caches()
-    if not show:
-        return html.Div("Tick 'Show all-indicator grid' to render every "
-                        "indicator at once (applies the Transform above).",
-                        className="emd-section-title",
-                        style={"color": P["muted"], "fontWeight": 500})
-    isos = _as_iso_list([iso3] + list(cmp_countries or []))
-    cmp_on = bool(compare)
-    label = (", ".join(NAME_BY_ISO.get(i, i) for i in isos) if cmp_on
-             else NAME_BY_ISO.get(iso3, iso3))
-    return html.Div([
-        html.Div(f"All indicators - {transform} - {label}",
-                 className="emd-section-title"),
-        indicator_grid(isos, transform, bool(normalise), cmp_on),
-    ])
 
 
 @app.callback(Output("es-row-one", "style"), Output("es-row-cross", "style"),
@@ -2463,11 +2383,19 @@ def _mrc(tab, days, rng):
               Input("columns-by", "value"), Input("f-days", "value"),
               Input("f-desk", "value"), Input("f-tier", "value"),
               Input("f-topic", "value"), Input("f-search", "value"),
-              Input("country", "value"), Input("cmp-countries", "value"),
-              Input("indicator", "value"), Input("cmp-series", "value"),
-              Input("transform", "value"),
-              Input("normalise", "value"), Input("show-grid", "value"),
-              Input("grid-compare", "value"), Input("ctry-range", "value"),
+              Input("ia-series-config", "data"),
+              Input("ia-fetch-mode", "value"),
+              Input("ia-fetch-custom", "start_date"),
+              Input("ia-fetch-custom", "end_date"),
+              Input("ia-global-mode", "value"),
+              Input("ia-chart-period", "value"),
+              Input("ia-chart-custom", "start_date"),
+              Input("ia-chart-custom", "end_date"),
+              Input("ia-excel-path", "value"),
+              Input("ia-excel-sheet", "value"),
+              Input("ia-excel-table", "value"),
+              Input("ia-excel-format", "value"),
+              Input("ia-excel-mapping", "value"),
               Input("es-mode", "value"),
               Input("es-sig-country", "value"), Input("es-sig-ind", "value"),
               Input("es-transform", "value"), Input("es-rule", "value"),
@@ -2477,26 +2405,33 @@ def _mrc(tab, days, rng):
               Input("mrc-days", "value"), Input("mrc-range", "value"),
               prevent_initial_call=True)
 def _persist(tab, columns_by, f_days, f_desk, f_tier, f_topic, f_search,
-             country, cmp_countries, indicator, cmp_series, transform,
-             normalise, show_grid, grid_compare, ctry_range, es_mode,
+             ia_series_config, ia_fetch_mode, ia_fetch_start, ia_fetch_end,
+             ia_global_mode, ia_chart_period, ia_chart_start, ia_chart_end,
+             ia_excel_path, ia_excel_sheet, ia_excel_table, ia_excel_format,
+             ia_excel_mapping,
+             es_mode,
              es_sig_country, es_sig_ind, es_transform, es_rule, es_threshold,
              es_target, es_xtarget, es_horizon, es_xsort, mrc_days, mrc_range):
-    save_state({
+    state = {
         "tab": tab, "columns_by": columns_by, "f_days": f_days,
         "f_desk": f_desk, "f_tier": f_tier, "f_topic": f_topic,
         "f_search": f_search,
-        "country": country, "cmp_countries": cmp_countries,
-        "indicator": indicator, "cmp_series": cmp_series,
-        "transform": transform,
-        "normalise": normalise, "show_grid": show_grid,
-        "grid_compare": grid_compare, "ctry_range": ctry_range,
+        "ia_series_config": ia_series_config,
+        "ia_fetch_mode": ia_fetch_mode,
+        "ia_fetch_start": ia_fetch_start, "ia_fetch_end": ia_fetch_end,
+        "ia_global_mode": ia_global_mode, "ia_chart_period": ia_chart_period,
+        "ia_chart_start": ia_chart_start, "ia_chart_end": ia_chart_end,
+        "ia_excel_path": ia_excel_path, "ia_excel_sheet": ia_excel_sheet,
+        "ia_excel_table": ia_excel_table, "ia_excel_format": ia_excel_format,
+        "ia_excel_mapping": ia_excel_mapping,
         "es_mode": es_mode, "es_sig_country": es_sig_country,
         "es_sig_ind": es_sig_ind, "es_transform": es_transform,
         "es_rule": es_rule, "es_threshold": es_threshold,
         "es_target": es_target, "es_xtarget": es_xtarget,
         "es_horizon": es_horizon, "es_xsort": es_xsort,
         "mrc_days": mrc_days, "mrc_range": mrc_range,
-    })
+    }
+    save_state(state)
     return {}
 
 

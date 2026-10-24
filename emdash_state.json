@@ -42,5 +42,114 @@
   "es_xsort": "abs",
   "mrc_days": 40,
   "mrc_range": "Max",
-  "news_src_sort": "tier"
+  "news_src_sort": "tier",
+  "ia_indicator": "wb_unemployment",
+  "ia_countries": [
+    "AUS",
+    "USA",
+    "BHR",
+    "BRA"
+  ],
+  "ia_start_year": 2010,
+  "ia_end_year": 2029,
+  "ia_transform": "rebase100",
+  "ia_range": "20Y",
+  "ia_projections": [
+    "on"
+  ],
+  "ia_history_mode": "20y",
+  "ia_history_start": "2006-01-01",
+  "ia_history_end": "2026-10-22",
+  "ia_display_mode": "actual",
+  "ia_chart_period": "custom",
+  "ia_chart_start": "2016-01-01",
+  "ia_chart_end": "2026-10-22",
+  "ia_enabled_0": [
+    "on"
+  ],
+  "ia_provider_0": "world_bank",
+  "ia_geography_0": "USA",
+  "ia_indicator_0": "NY.GDP.MKTP.KD.ZG",
+  "ia_enabled_1": [
+    "on"
+  ],
+  "ia_provider_1": "imf_sdmx",
+  "ia_geography_1": "USA",
+  "ia_indicator_1": "CPI_ALL_ITEMS_INDEX_M",
+  "ia_enabled_2": [
+    "on"
+  ],
+  "ia_provider_2": "world_bank",
+  "ia_geography_2": "VNM",
+  "ia_indicator_2": "FP.CPI.TOTL.ZG",
+  "ia_enabled_3": [],
+  "ia_provider_3": "world_bank",
+  "ia_geography_3": "SGP",
+  "ia_indicator_3": "FI.RES.TOTL.CD",
+  "ia_series_config": [
+    {
+      "uid": "d13926d2d8",
+      "included": true,
+      "collapsed": true,
+      "provider": "imf_sdmx",
+      "geography": "USA",
+      "indicator": "CPI_ALL_ITEMS_INDEX_M",
+      "transform": "level",
+      "window": 5,
+      "colour": "#2E5C96"
+    },
+    {
+      "uid": "2604bbef8a",
+      "included": true,
+      "collapsed": true,
+      "provider": "world_bank",
+      "geography": "CHN",
+      "indicator": "NY.GDP.MKTP.KD.ZG",
+      "transform": "level",
+      "window": 5,
+      "colour": "#948A54"
+    },
+    {
+      "uid": "7d6ea53f07",
+      "included": true,
+      "collapsed": true,
+      "provider": "world_bank",
+      "geography": "USA",
+      "indicator": "GC.DOD.TOTL.GD.ZS",
+      "transform": "level",
+      "window": 5,
+      "colour": "#2E7D46"
+    },
+    {
+      "uid": "ce5c189f5b",
+      "included": true,
+      "collapsed": true,
+      "provider": "yahoo_market",
+      "geography": "",
+      "indicator": "BRENT",
+      "transform": "level",
+      "window": 5,
+      "colour": "#1F497D"
+    },
+    {
+      "uid": "ec0533525c",
+      "included": false,
+      "collapsed": true,
+      "provider": "yahoo_market",
+      "geography": "",
+      "indicator": "BTCUSD",
+      "transform": "yoy",
+      "window": 5,
+      "colour": "#B4453A"
+    }
+  ],
+  "ia_fetch_mode": "20y",
+  "ia_fetch_start": "2006-01-01",
+  "ia_fetch_end": "2026-10-23",
+  "ia_global_mode": "indexed",
+  "ia_excel_path": "",
+  "ia_excel_sheet": "Data_Long",
+  "ia_excel_table": "GembridgeSeries",
+  "ia_excel_format": "auto",
+  "ia_excel_mapping": "Mapping"
 }

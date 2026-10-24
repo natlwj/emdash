@@ -1,0 +1,88 @@
+/* EMDASH Indicator Analysis — chart-first dynamic series workflow */
+.ia-page-head { display:flex; align-items:center; justify-content:space-between; gap:18px;
+  padding:14px 24px 12px; background:var(--card); border-bottom:1px solid var(--border); }
+.ia-page-title { color:var(--navy1); font-size:17px; font-weight:700; letter-spacing:.2px; }
+.ia-page-subtitle { margin-top:3px; color:var(--muted); font-size:11.5px; }
+.ia-page-actions { display:flex; align-items:center; gap:7px; }
+.ia-series-workspace { margin:10px 24px 12px; }
+.ia-series-count { margin:0 0 6px; color:var(--muted); font-size:10.5px; text-align:right; }
+.ia-series-card { margin-bottom:6px; background:var(--card); border:1px solid var(--border);
+  border-left:3px solid var(--navy2); border-radius:5px; overflow:hidden; }
+.ia-series-card.ia-series-disabled { opacity:.63; border-left-color:var(--grey); }
+.ia-series-card-head { display:flex; align-items:center; min-height:44px; gap:8px; padding:6px 9px; }
+.ia-collapse-btn,.ia-icon-btn,.ia-text-btn { font-family:var(--ui); border:0; background:transparent;
+  color:var(--navy2); cursor:pointer; }
+.ia-collapse-btn { width:25px; height:28px; font-size:15px; }
+.ia-icon-btn { width:26px; height:27px; border:1px solid var(--border); border-radius:4px; font-weight:700; }
+.ia-icon-btn:hover,.ia-text-btn:hover { background:#EEF2FA; color:var(--navy1); }
+.ia-icon-btn:disabled { color:#B9C0CA; cursor:default; background:transparent; }
+.ia-text-btn { padding:5px 7px; font-size:10.5px; font-weight:600; border-radius:4px; }
+.ia-delete { color:var(--bad); }
+.ia-colour-mark { width:5px; height:28px; flex:0 0 5px; }
+.ia-series-summary { min-width:0; flex:1; }
+.ia-series-name { overflow:hidden; color:var(--ink); font-size:12.5px; font-weight:650;
+  text-overflow:ellipsis; white-space:nowrap; }
+.ia-series-meta { margin-top:2px; overflow:hidden; color:var(--muted); font-size:10px;
+  text-overflow:ellipsis; white-space:nowrap; }
+.ia-include { flex:0 0 auto; font-size:11.5px; }
+.ia-series-actions { display:flex; align-items:center; gap:2px; flex:0 0 auto; }
+.ia-series-editor-body { display:grid; grid-template-columns:minmax(140px,.8fr) minmax(170px,.9fr)
+  minmax(260px,1.5fr) minmax(190px,1.05fr) minmax(115px,.55fr) minmax(145px,.65fr);
+  column-gap:14px; row-gap:9px; padding:10px 12px 12px 42px;
+  background:#FAFBFC; border-top:1px solid #EEF0F4; }
+.ia-field { min-width:0; }
+.ia-field > .emd-ctrl-label { display:block; margin-bottom:5px; }
+.ia-series-editor-body .emd-ctrl-label { min-height:25px; white-space:normal; line-height:1.2; }
+.ia-window-input { width:100%; }
+.ia-window-placeholder { min-width:0; }
+.ia-adaptive-value { min-height:36px; padding:8px 10px; border:1px solid var(--border);
+  border-radius:8px; background:#F1F3F7; color:var(--muted); font-size:12px; }
+.ia-sources-details { margin:8px 24px 10px; }
+.ia-sources-body { padding:8px 2px 2px; }
+.ia-subhead { margin:4px 0 7px; color:var(--navy1); font-size:12px; font-weight:700; }
+.ia-source-controls { display:grid; grid-template-columns:minmax(280px,2fr) 135px 145px 145px 135px auto;
+  gap:10px; align-items:end; }
+.ia-path-input { width:100%; }
+.ia-source-status { min-height:24px; padding:7px 2px; color:var(--muted); font-size:10.5px; }
+.ia-test-head { margin-top:10px; padding-top:9px; border-top:1px solid var(--border); }
+.ia-test-controls { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.ia-test-help { color:var(--muted); font-size:10.5px; }
+.ia-diagnostic-copy { display:block; width:100%; min-height:165px; margin-top:8px; padding:9px;
+  border:1px solid var(--border); border-radius:4px; background:#F8F9FB; color:var(--ink);
+  font-family:Consolas,'Courier New',monospace; font-size:10px; line-height:1.4; resize:vertical; }
+.ia-fetch-controls,.ia-chart-controls { border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+.ia-date-wrap { display:flex; align-items:center; }
+.ia-control-help { flex:1 1 300px; color:var(--muted); font-size:10.5px; line-height:1.35; }
+.ia-fetch-controls .DateInput,.ia-chart-controls .DateInput { width:112px; }
+.ia-fetch-controls .DateInput_input,.ia-chart-controls .DateInput_input { padding:7px 8px 5px;
+  color:var(--ink); font-family:var(--ui); font-size:12px; }
+.ia-fetch-controls .DateRangePickerInput,.ia-chart-controls .DateRangePickerInput {
+  border:1px solid var(--border); border-radius:6px; }
+.ia-status { margin:8px 24px 4px; padding:7px 10px; border-left:3px solid var(--navy3);
+  background:#F7F8FA; color:var(--ink); font-size:10.5px; line-height:1.35; }
+.ia-status--ok { border-left-color:var(--good); }
+.ia-status--warning { border-left-color:var(--gold); background:#FAF8F0; }
+.ia-status--error { border-left-color:var(--bad); background:#FCF4F3; }
+.ia-retrieval-details { margin:3px 24px 8px; font-size:10.5px; }
+.ia-chart-panel { margin:8px 16px; padding:10px 14px 8px; border-radius:6px; }
+.ia-section { margin:8px 16px; padding:0 0 10px; border-radius:6px; overflow:hidden; }
+.ia-section-title { padding:11px 13px 3px; color:var(--navy1); font-size:13px; font-weight:700; }
+.ia-section-note { padding:0 13px 8px; color:var(--muted); font-size:10.5px; line-height:1.4; }
+.ia-section > div:last-child { padding:0 9px; }
+.ia-data-details,.ia-methodology-wrap { margin:9px 16px 16px; }
+.ia-data-details > div:last-child { padding:4px 2px 8px; }
+.ia-methodology { padding-top:7px; color:var(--ink); font-size:11px; line-height:1.5; }
+.ia-methodology p { margin:7px 0; }
+.ia-empty-table { padding:10px 4px; color:var(--muted); font-size:11px; }
+@media (max-width:1250px) {
+  .ia-series-editor-body { grid-template-columns:repeat(3,minmax(0,1fr)); padding-left:12px; }
+  .ia-source-controls { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+@media (max-width:760px) {
+  .ia-page-head { padding-left:12px; padding-right:12px; }
+  .ia-series-workspace,.ia-sources-details,.ia-status,.ia-retrieval-details { margin-left:8px; margin-right:8px; }
+  .ia-series-actions .ia-text-btn { display:none; }
+  .ia-series-editor-body,.ia-source-controls { grid-template-columns:1fr; }
+  .ia-series-editor-body { padding-left:12px; }
+  .ia-chart-panel,.ia-section,.ia-data-details,.ia-methodology-wrap { margin-left:8px; margin-right:8px; }
+}
