@@ -359,7 +359,7 @@ def _mw_price(value: Any, unit: str) -> str:
     return f"{number:,.{decimals}f}"
 
 
-def _mw_change(value: Any, unit: str = "%") -> tuple[str, str]:
+def _mw_change(value: Any) -> tuple[str, str]:
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -367,8 +367,8 @@ def _mw_change(value: Any, unit: str = "%") -> tuple[str, str]:
     if not math.isfinite(number):
         return "—", "mw-change mw-change--flat"
     tone = "positive" if number > 0 else ("negative" if number < 0 else "flat")
-    text = f"{number:+.1f} bp" if unit == "bp" else f"{number:+.2f}%"
-    return text, f"mw-change mw-change--{tone}"
+    return f"{number:+.2f}%", f"mw-change mw-change--{tone}"
+
 
 def _mw_sparkline(points: list[dict[str, Any]], colour: str) -> go.Figure:
     x = [row.get("date") for row in points or []]
@@ -389,9 +389,8 @@ def _mw_instrument_row(item: dict[str, Any], snapshot: dict[str, Any] | None,
     definition = catalogue(item["provider"]).get(item["indicator"])
     snapshot = snapshot or {}
     values = []
-    change_unit = snapshot.get("change_unit", "%")
     for key in ("change_1d", "change_1w", "change_1m", "change_ytd"):
-        text, class_name = _mw_change(snapshot.get(key), change_unit)
+        text, class_name = _mw_change(snapshot.get(key))
         values.append(html.Div(text, className=class_name))
     last_change = snapshot.get("change_1d")
     spark_colour = P["good"] if isinstance(last_change, (int, float)) and last_change > 0 else (
@@ -445,8 +444,8 @@ def _mw_instrument_row(item: dict[str, Any], snapshot: dict[str, Any] | None,
 def _mw_header_row() -> html.Div:
     return html.Div([
         html.Div("Instrument", className="mw-h-instrument"), html.Div("Last", className="mw-h-last"),
-        html.Div("1D"), html.Div("1W"), html.Div("1M"), html.Div("YTD"),
-        html.Div("30 obs.", className="mw-h-spark"), html.Div("Freshness"),
+        html.Div("1D"), html.Div("1W"), html.Div("1M", title="Trailing one month; not month-to-date"), html.Div("YTD"),
+        html.Div("Trend", className="mw-h-spark", title="Latest 30 daily observations"), html.Div("Freshness"),
         html.Div("Actions", className="mw-h-actions"),
     ], className="mw-column-head")
 
@@ -492,7 +491,9 @@ def _market_watch_body(config_value: dict[str, Any], data: dict[str, Any] | None
                 for row in config_value["instruments"]}
     instrument_options = [dict(option, disabled=("yahoo_market", option["value"]) in existing)
                           for option in instrument_options]
-    controls = html.Div([
+    controls = html.Details([
+        html.Summary("Manage watchlist", className="mw-manage-summary"),
+        html.Div([
         _field(dcc.Dropdown(id="mw-add-provider", value="yahoo_market",
                             options=MARKET_WATCH_PROVIDER_OPTIONS, clearable=False,
                             searchable=False), "Source"),
@@ -509,9 +510,10 @@ def _market_watch_body(config_value: dict[str, Any], data: dict[str, Any] | None
         html.Button("Add group", id="mw-add-group-button", n_clicks=0,
                     className="emd-btn emd-btn--ghost",
                     disabled=len(config_value["groups"]) >= 10),
-    ], className="mw-controls")
+        ], className="mw-controls")
+    ], className="mw-manage-details", open=False)
     note = html.Div([
-        html.Span("Yahoo chart data · latest available delayed daily observations · cached through the Indicator Analysis provider layer."),
+        html.Span("Yahoo market data · delayed daily observations · cached through the Indicator Analysis provider layer."),
         html.Span(id="mw-chart-status", className="mw-chart-status"),
     ], className="mw-note")
     return html.Div([controls, note] + groups)
@@ -544,7 +546,7 @@ def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
                             className="mw-island-toggle", title="Expand/collapse Market Watch"),
                 html.Div([
                     html.Div("Market Watch", className="mw-title"),
-                    html.Div("Delayed daily market snapshot; use Chart in IA for deeper analysis.",
+                    html.Div("Quick market check; use Chart in IA for deeper analysis.",
                              className="mw-subtitle"),
                 ], className="mw-title-wrap"),
                 html.Div(id="mw-count", className="mw-count"),
@@ -959,7 +961,7 @@ def register(app):
         count = len(config_value["instruments"])
         style = {"display": "none"} if config_value["collapsed"] else {}
         return (_market_watch_body(config_value, data or {}), style,
-                f"{count} / {MAX_MARKET_WATCH}",
+                "",
                 "▸" if config_value["collapsed"] else "▾")
 
     @app.callback(
@@ -1034,15 +1036,16 @@ def register(app):
                     for row in payload.get("instruments", []))
         delayed = sum(row.get("freshness_tone") == "delayed"
                       for row in payload.get("instruments", []))
-        text = f"{loaded} loaded"
+        issues = []
         if delayed:
-            text += f" · {delayed} delayed"
+            issues.append(f"{delayed} delayed")
         if stale:
-            text += f" · {stale} stale"
+            issues.append(f"{stale} stale")
         if errors:
-            text += f" · {errors} failed"
+            issues.append(f"{errors} unavailable")
+        text = " · ".join(issues)
         class_name = "mw-status mw-status--error" if not loaded and errors else (
-            "mw-status mw-status--warning" if errors or stale else "mw-status mw-status--ok")
+            "mw-status mw-status--warning" if issues else "mw-status mw-status--quiet")
         return payload, text, class_name
 
     @app.callback(

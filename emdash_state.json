@@ -121,17 +121,6 @@
       "colour": "#2E7D46"
     },
     {
-      "uid": "ce5c189f5b",
-      "included": true,
-      "collapsed": true,
-      "provider": "yahoo_market",
-      "geography": "",
-      "indicator": "BRENT",
-      "transform": "level",
-      "window": 5,
-      "colour": "#1F497D"
-    },
-    {
       "uid": "ec0533525c",
       "included": true,
       "collapsed": false,
@@ -152,6 +141,17 @@
       "transform": "level",
       "window": 5,
       "colour": "#6593C4"
+    },
+    {
+      "uid": "a2f1250539",
+      "included": true,
+      "collapsed": false,
+      "provider": "yahoo_market",
+      "geography": "Market",
+      "indicator": "BRENT",
+      "transform": "level",
+      "window": 5,
+      "colour": "#74592D"
     }
   ],
   "ia_fetch_mode": "20y",
@@ -162,5 +162,107 @@
   "ia_excel_sheet": "Data_Long",
   "ia_excel_table": "GembridgeSeries",
   "ia_excel_format": "auto",
-  "ia_excel_mapping": "Mapping"
+  "ia_excel_mapping": "Mapping",
+  "ia_market_watch": {
+    "collapsed": false,
+    "groups": [
+      {
+        "uid": "mw-global",
+        "name": "Global risk",
+        "collapsed": false
+      },
+      {
+        "uid": "mw-fx",
+        "name": "FX",
+        "collapsed": false
+      },
+      {
+        "uid": "mw-commodities",
+        "name": "Commodities",
+        "collapsed": false
+      }
+    ],
+    "instruments": [
+      {
+        "uid": "mw-spx",
+        "provider": "yahoo_market",
+        "indicator": "SPX",
+        "geography": "Market",
+        "group_uid": "mw-global",
+        "options": {}
+      },
+      {
+        "uid": "mw-vix",
+        "provider": "yahoo_market",
+        "indicator": "VIX",
+        "geography": "Market",
+        "group_uid": "mw-global",
+        "options": {}
+      },
+      {
+        "uid": "mw-us10y",
+        "provider": "yahoo_market",
+        "indicator": "US10Y",
+        "geography": "Market",
+        "group_uid": "mw-global",
+        "options": {}
+      },
+      {
+        "uid": "mw-eem",
+        "provider": "yahoo_market",
+        "indicator": "EEM",
+        "geography": "Market",
+        "group_uid": "mw-global",
+        "options": {}
+      },
+      {
+        "uid": "mw-eurusd",
+        "provider": "yahoo_market",
+        "indicator": "EURUSD",
+        "geography": "Market",
+        "group_uid": "mw-fx",
+        "options": {}
+      },
+      {
+        "uid": "mw-usdjpy",
+        "provider": "yahoo_market",
+        "indicator": "USDJPY",
+        "geography": "Market",
+        "group_uid": "mw-fx",
+        "options": {}
+      },
+      {
+        "uid": "mw-dxy",
+        "provider": "yahoo_market",
+        "indicator": "DXY",
+        "geography": "Market",
+        "group_uid": "mw-fx",
+        "options": {}
+      },
+      {
+        "uid": "mw-gold",
+        "provider": "yahoo_market",
+        "indicator": "GOLD",
+        "geography": "Market",
+        "group_uid": "mw-commodities",
+        "options": {}
+      },
+      {
+        "uid": "mw-brent",
+        "provider": "yahoo_market",
+        "indicator": "BRENT",
+        "geography": "Market",
+        "group_uid": "mw-commodities",
+        "options": {}
+      },
+      {
+        "uid": "mw-item-40dad2d8b2",
+        "provider": "yahoo_market",
+        "indicator": "USDSGD",
+        "geography": "Market",
+        "group_uid": "mw-fx",
+        "options": {}
+      }
+    ]
+  }
 }
