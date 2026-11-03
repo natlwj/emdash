@@ -290,8 +290,6 @@ MARKET_INDICATORS = {
         IndicatorDefinition("yahoo_market", "GBPUSD", "GBP/USD", "Daily", "USD per GBP", "GBP/USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/GBPUSD=X", key_template="GBPUSD=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "USDJPY", "USD/JPY", "Daily", "JPY per USD", "USD/JPY close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/JPY=X", key_template="JPY=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "AUDUSD", "AUD/USD", "Daily", "USD per AUD", "AUD/USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/AUDUSD=X", key_template="AUDUSD=X", asset="FX", semantic_type="price"),
-        IndicatorDefinition("yahoo_market", "USDSGD", "USD/SGD", "Daily", "SGD per USD", "USD/SGD delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/SGD=X", key_template="SGD=X", asset="FX", semantic_type="price"),
-        IndicatorDefinition("yahoo_market", "USDCNH", "USD/CNH", "Daily", "CNH per USD", "USD/CNH delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CNH=X", key_template="CNH=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "SPX", "S&P 500", "Daily", "Index", "S&P 500 close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EGSPC", key_template="^GSPC", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "NASDAQ", "Nasdaq Composite", "Daily", "Index", "Nasdaq Composite close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EIXIC", key_template="^IXIC", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "DOW", "Dow Jones Industrial Average", "Daily", "Index", "DJIA close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EDJI", key_template="^DJI", asset="Equity index", semantic_type="price"),
@@ -306,7 +304,6 @@ MARKET_INDICATORS = {
         IndicatorDefinition("yahoo_market", "EMB", "iShares J.P. Morgan USD EM Bond ETF", "Daily", "USD", "EMB adjusted market close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/EMB", key_template="EMB", asset="Bond ETF", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "STOXX50", "EURO STOXX 50", "Daily", "Index", "EURO STOXX 50 close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5ESTOXX50E", key_template="^STOXX50E", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "SHCOMP", "Shanghai Composite", "Daily", "Index", "Shanghai Composite close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/000001.SS", key_template="000001.SS", asset="Equity index", semantic_type="price"),
-        IndicatorDefinition("yahoo_market", "CSI300", "CSI 300", "Daily", "Index", "CSI 300 delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/000300.SS", key_template="000300.SS", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "USDCHF", "USD/CHF", "Daily", "CHF per USD", "USD/CHF close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CHF=X", key_template="CHF=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "USDCAD", "USD/CAD", "Daily", "CAD per USD", "USD/CAD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CAD=X", key_template="CAD=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "NATGAS", "Natural gas front-month", "Daily", "USD/MMBtu", "Front-month Henry Hub natural-gas futures close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/NG=F", key_template="NG=F", asset="Commodity", semantic_type="price"),
@@ -1302,84 +1299,55 @@ def _month_shift(value: dt.date, months: int) -> dt.date:
     return dt.date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
 
 
-def _market_watch_baseline(records: list[dict[str, Any]], target: dt.date | None = None,
-                           previous_observation: bool = False) -> float | None:
+def _market_watch_change(records: list[dict[str, Any]], latest_value: float,
+                         semantic_type: str = "price", target: dt.date | None = None,
+                         previous_observation: bool = False) -> float | None:
+    if not records: return None
     baseline = None
-    if previous_observation and len(records) > 1:
-        baseline = records[-2].get("value")
+    if previous_observation and len(records) > 1: baseline = records[-2].get("value")
     elif target is not None:
         for row in reversed(records):
             try:
                 if dt.date.fromisoformat(str(row.get("date", ""))[:10]) <= target:
                     baseline = row.get("value"); break
-            except ValueError:
-                continue
+            except ValueError: continue
     try:
-        value = float(baseline)
-        return value if math.isfinite(value) else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _market_watch_change(records: list[dict[str, Any]], latest_value: float,
-                         semantic_type: str = "price", target: dt.date | None = None,
-                         previous_observation: bool = False) -> float | None:
-    baseline = _market_watch_baseline(records, target, previous_observation)
-    if baseline is None:
-        return None
-    latest = float(latest_value)
-    if semantic_type in ("rate", "spread"):
-        return (latest - baseline) * 100.0
-    return None if baseline == 0 else (latest / baseline - 1.0) * 100.0
+        baseline, latest = float(baseline), float(latest_value)
+        if not math.isfinite(baseline) or not math.isfinite(latest): return None
+        if semantic_type in ("rate", "spread"): return (latest - baseline) * 100.0
+        return None if baseline == 0 else (latest / baseline - 1.0) * 100.0
+    except (TypeError, ValueError, ZeroDivisionError): return None
 
 
 def market_watch_snapshot(result: dict[str, Any], now: dt.datetime | None = None,
                           spark_points: int = 30) -> dict[str, Any]:
-    """Convert one provider result into a latest-available delayed daily snapshot."""
     now = now or dt.datetime.now(UTC)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=UTC)
+    if now.tzinfo is None: now = now.replace(tzinfo=UTC)
     records = []
     for row in result.get("records", []):
-        try:
-            numeric = float(row.get("value")); date = dt.date.fromisoformat(str(row.get("date", ""))[:10])
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(numeric):
-            records.append({**row, "date": date.isoformat(), "value": numeric})
+        try: value, date = float(row.get("value")), dt.date.fromisoformat(str(row.get("date", ""))[:10])
+        except (TypeError, ValueError): continue
+        if math.isfinite(value): records.append({**row, "date": date.isoformat(), "value": value})
     records.sort(key=lambda row: row["date"])
-    if not records:
-        raise ProviderError("Market Watch received no usable observations.")
-    meta = result.get("meta", {}); latest = records[-1]
-    latest_date = dt.date.fromisoformat(latest["date"]); latest_value = float(latest["value"])
+    if not records: raise ProviderError("Market Watch received no usable observations.")
+    meta, latest = result.get("meta", {}), records[-1]
+    latest_date, latest_value = dt.date.fromisoformat(latest["date"]), float(latest["value"])
     semantic_type = str(meta.get("semantic_type") or "price").lower()
     age_days = max(0, (now.date() - latest_date).days)
-    if age_days <= 3: freshness, freshness_tone = "Latest daily", "fresh"
-    elif age_days <= 7: freshness, freshness_tone = "Delayed", "delayed"
-    else: freshness, freshness_tone = "Stale", "stale"
+    freshness, tone = (("Latest daily", "fresh") if age_days <= 3 else (("Delayed", "delayed") if age_days <= 7 else ("Stale", "stale")))
+    change = lambda **kw: _market_watch_change(records, latest_value, semantic_type, **kw)
     prior_year_close = dt.date(latest_date.year, 1, 1) - dt.timedelta(days=1)
     spark = records[-max(2, int(spark_points or 30)):]
-    def change(**kwargs):
-        return _market_watch_change(records, latest_value, semantic_type, **kwargs)
-    return {
-        "request_id": meta.get("request_id", ""), "provider": meta.get("provider", ""),
-        "provider_label": meta.get("provider_label", ""),
-        "indicator": meta.get("series_code", meta.get("indicator", "")),
-        "label": meta.get("label", meta.get("series_code", "")),
-        "asset": meta.get("geography_label", meta.get("geography", "Market")),
-        "unit": meta.get("unit", ""), "semantic_type": semantic_type,
-        "change_unit": "bp" if semantic_type in ("rate", "spread") else "%",
-        "last": latest_value, "as_of": latest_date.isoformat(),
-        "change_1d": change(previous_observation=True),
-        "change_1w": change(target=latest_date - dt.timedelta(days=7)),
-        "change_1m": change(target=_month_shift(latest_date, -1)),
-        "change_ytd": change(target=prior_year_close),
-        "sparkline": [{"date": row["date"], "value": row["value"]} for row in spark],
-        "retrieved_at": meta.get("retrieved_at", ""), "cache_status": meta.get("cache_status", ""),
-        "freshness": freshness, "freshness_tone": freshness_tone, "age_days": age_days,
-        "warning": meta.get("warning", ""), "source_url": meta.get("source_url", ""),
-        "data_basis": "Latest available delayed daily observation",
-    }
+    return {"request_id": meta.get("request_id", ""), "provider": meta.get("provider", ""),
+      "provider_label": meta.get("provider_label", ""), "indicator": meta.get("series_code", meta.get("indicator", "")),
+      "label": meta.get("label", meta.get("series_code", "")), "asset": meta.get("geography_label", meta.get("geography", "Market")),
+      "unit": meta.get("unit", ""), "semantic_type": semantic_type, "change_unit": "bp" if semantic_type in ("rate", "spread") else "%",
+      "frequency": meta.get("frequency", "Daily"), "last": latest_value, "as_of": latest_date.isoformat(),
+      "change_1d": change(previous_observation=True), "change_1w": change(target=latest_date-dt.timedelta(days=7)),
+      "change_1m": change(target=_month_shift(latest_date,-1)), "change_ytd": change(target=prior_year_close),
+      "sparkline": [{"date":r["date"],"value":r["value"]} for r in spark], "retrieved_at": meta.get("retrieved_at", ""),
+      "cache_status": meta.get("cache_status", ""), "freshness": freshness, "freshness_tone": tone, "age_days": age_days,
+      "warning": meta.get("warning", ""), "source_url": meta.get("source_url", "")}
 
 class MarketWatchService:
     """Provider-neutral, cache-reusing snapshot service for at most 20 rows."""

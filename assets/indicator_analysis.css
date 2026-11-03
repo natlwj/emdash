@@ -16,20 +16,9 @@
 @media(max-width:760px){.ia-page-head{padding-left:12px;padding-right:12px}.ia-series-workspace,.ia-sources-details,.ia-status,.ia-retrieval-details{margin-left:8px;margin-right:8px}.ia-series-actions .ia-text-btn{display:none}.ia-series-editor-body,.ia-source-controls{grid-template-columns:1fr}.ia-series-editor-body{padding-left:12px}.ia-chart-panel,.ia-section,.ia-data-details,.ia-methodology-wrap{margin-left:8px;margin-right:8px}}
 @media(max-width:560px){.mw-controls{grid-template-columns:1fr}.mw-island-body{padding-left:6px;padding-right:6px}.mw-count{margin-left:36px}.mw-status{margin-left:0}}
 
-/* Market Watch V1.1 targeted UX fixes */
-.mw-count:empty,.mw-status--quiet:empty{display:none}
-.mw-manage-details{margin:0 0 7px;border:1px solid var(--border);border-radius:5px;background:#fbfcfd}
-.mw-manage-summary{padding:7px 10px;color:var(--navy2);font-size:10.5px;font-weight:700;cursor:pointer;list-style-position:inside}
-.mw-manage-details[open] .mw-manage-summary{border-bottom:1px solid #e9ecf1}
-.mw-manage-details .mw-controls{padding:8px 10px 10px}
-.mw-group{overflow-x:auto;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch}
-.mw-group-head{position:sticky;left:0;z-index:4;min-width:100%;box-sizing:border-box}
-.mw-column-head,.mw-row{grid-template-columns:minmax(190px,1.35fr) 86px repeat(4,54px) 104px 78px minmax(236px,1.1fr);column-gap:6px;min-width:1000px}
-.mw-column-head{font-size:8.5px}.mw-change{font-size:10px;white-space:nowrap}
-.mw-spark{width:98px}.mw-spark .js-plotly-plot,.mw-spark .plot-container,.mw-spark .svg-container{width:98px!important}
-.mw-row-actions,.mw-h-actions{position:sticky;right:0;z-index:3;background:#fff;box-shadow:-7px 0 8px -9px rgba(20,42,78,.75)}
-.mw-column-head .mw-h-actions{background:#fbfcfd}.mw-row:hover .mw-row-actions{background:#fbfcfe}
-.mw-fresh--fresh{background:transparent;color:var(--muted);padding-left:0}
-@media(max-width:1250px){.mw-controls{grid-template-columns:160px minmax(230px,1fr) 150px auto 170px auto}}
-@media(max-width:900px){.mw-island-head{flex-wrap:nowrap}.mw-title-wrap{min-width:0}.mw-status{margin-left:0}.mw-manage-details .mw-controls{grid-template-columns:1fr 1fr}.mw-column-head,.mw-row{grid-template-columns:minmax(170px,1.25fr) 80px repeat(4,50px) 92px 72px 222px;min-width:900px}}
-@media(max-width:560px){.mw-manage-details .mw-controls{grid-template-columns:1fr}.mw-subtitle{display:none}}
+/* Market Watch V1 final polish */
+.mw-island{border-top-color:var(--gold)}.mw-island-head{background:linear-gradient(90deg,#FAF8F0 0%,#FFFFFF 58%)}.mw-count:empty,.mw-status--quiet:empty{display:none}
+.mw-manage-details{margin:0 0 7px;border:1px solid var(--border);border-radius:5px;background:#fbfcfd}.mw-manage-summary{padding:7px 10px;color:var(--navy2);font-size:10.5px;font-weight:700;cursor:pointer;list-style-position:inside}.mw-manage-details[open] .mw-manage-summary{border-bottom:1px solid #e9ecf1}.mw-manage-details .mw-controls{padding:8px 10px 10px}
+.mw-group{overflow-x:auto;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch}.mw-group-head{position:sticky;left:0;z-index:4;min-width:100%;box-sizing:border-box}.mw-column-head,.mw-row{grid-template-columns:minmax(145px,1fr) 86px repeat(4,54px) 104px 78px minmax(236px,1.1fr);column-gap:6px;min-width:940px}.mw-column-head{font-size:8.5px}.mw-change{font-size:10px;white-space:nowrap}.mw-spark{width:98px}.mw-spark .js-plotly-plot,.mw-spark .plot-container,.mw-spark .svg-container{width:98px!important}.mw-data-meta{color:var(--muted)}
+.mw-row-actions,.mw-h-actions{position:sticky;right:0;z-index:3;background:#fff;box-shadow:-7px 0 8px -9px rgba(20,42,78,.75)}.mw-column-head .mw-h-actions{background:#fbfcfd}.mw-row:hover .mw-row-actions{background:#fbfcfe}.mw-fresh--fresh{background:transparent;color:var(--muted);padding-left:0}
+@media(max-width:1250px){.mw-controls{grid-template-columns:160px minmax(230px,1fr) 150px auto 170px auto}}@media(max-width:900px){.mw-island-head{flex-wrap:nowrap}.mw-title-wrap{min-width:0}.mw-status{margin-left:0}.mw-manage-details .mw-controls{grid-template-columns:1fr 1fr}.mw-column-head,.mw-row{grid-template-columns:minmax(135px,.95fr) 80px repeat(4,50px) 92px 72px 222px;min-width:850px}}@media(max-width:560px){.mw-manage-details .mw-controls{grid-template-columns:1fr}.mw-subtitle{display:none}}

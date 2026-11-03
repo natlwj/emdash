@@ -180,6 +180,11 @@
         "uid": "mw-commodities",
         "name": "Commodities",
         "collapsed": false
+      },
+      {
+        "uid": "mw-group-876ea87ea0",
+        "name": "testy1",
+        "collapsed": false
       }
     ],
     "instruments": [
@@ -256,11 +261,11 @@
         "options": {}
       },
       {
-        "uid": "mw-item-40dad2d8b2",
+        "uid": "mw-item-208dd3b913",
         "provider": "yahoo_market",
-        "indicator": "USDSGD",
+        "indicator": "BTCUSD",
         "geography": "Market",
-        "group_uid": "mw-fx",
+        "group_uid": "mw-group-876ea87ea0",
         "options": {}
       }
     ]

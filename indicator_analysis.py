@@ -359,16 +359,12 @@ def _mw_price(value: Any, unit: str) -> str:
     return f"{number:,.{decimals}f}"
 
 
-def _mw_change(value: Any) -> tuple[str, str]:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "—", "mw-change mw-change--flat"
-    if not math.isfinite(number):
-        return "—", "mw-change mw-change--flat"
+def _mw_change(value: Any, unit: str = "%") -> tuple[str, str]:
+    try: number = float(value)
+    except (TypeError, ValueError): return "—", "mw-change mw-change--flat"
+    if not math.isfinite(number): return "—", "mw-change mw-change--flat"
     tone = "positive" if number > 0 else ("negative" if number < 0 else "flat")
-    return f"{number:+.2f}%", f"mw-change mw-change--{tone}"
-
+    return (f"{number:+.1f} bp" if unit == "bp" else f"{number:+.2f}%"), f"mw-change mw-change--{tone}"
 
 def _mw_sparkline(points: list[dict[str, Any]], colour: str) -> go.Figure:
     x = [row.get("date") for row in points or []]
@@ -389,8 +385,9 @@ def _mw_instrument_row(item: dict[str, Any], snapshot: dict[str, Any] | None,
     definition = catalogue(item["provider"]).get(item["indicator"])
     snapshot = snapshot or {}
     values = []
+    change_unit = snapshot.get("change_unit", "%")
     for key in ("change_1d", "change_1w", "change_1m", "change_ytd"):
-        text, class_name = _mw_change(snapshot.get(key))
+        text, class_name = _mw_change(snapshot.get(key), change_unit)
         values.append(html.Div(text, className=class_name))
     last_change = snapshot.get("change_1d")
     spark_colour = P["good"] if isinstance(last_change, (int, float)) and last_change > 0 else (
@@ -445,7 +442,7 @@ def _mw_header_row() -> html.Div:
     return html.Div([
         html.Div("Instrument", className="mw-h-instrument"), html.Div("Last", className="mw-h-last"),
         html.Div("1D"), html.Div("1W"), html.Div("1M", title="Trailing one month; not month-to-date"), html.Div("YTD"),
-        html.Div("Trend", className="mw-h-spark", title="Latest 30 daily observations"), html.Div("Freshness"),
+        html.Div("30D Trend", className="mw-h-spark", title="Latest 30 daily observations"), html.Div("Data"),
         html.Div("Actions", className="mw-h-actions"),
     ], className="mw-column-head")
 
@@ -1037,15 +1034,11 @@ def register(app):
         delayed = sum(row.get("freshness_tone") == "delayed"
                       for row in payload.get("instruments", []))
         issues = []
-        if delayed:
-            issues.append(f"{delayed} delayed")
-        if stale:
-            issues.append(f"{stale} stale")
-        if errors:
-            issues.append(f"{errors} unavailable")
+        if delayed: issues.append(f"{delayed} delayed")
+        if stale: issues.append(f"{stale} stale")
+        if errors: issues.append(f"{errors} unavailable")
         text = " · ".join(issues)
-        class_name = "mw-status mw-status--error" if not loaded and errors else (
-            "mw-status mw-status--warning" if issues else "mw-status mw-status--quiet")
+        class_name = "mw-status mw-status--error" if not loaded and errors else ("mw-status mw-status--warning" if issues else "mw-status mw-status--quiet")
         return payload, text, class_name
 
     @app.callback(
