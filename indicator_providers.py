@@ -1,7 +1,8 @@
 """Provider, diagnostics and cache layer for EMDASH Indicator Analysis.
 
-All providers return the same records/meta contract. The Indicator Analysis UI
-therefore does not need to change when another provider is added.
+All providers return the same records/meta contract. Indicator Analysis and the
+provider-neutral Market Watch snapshot service therefore do not need to change
+when another approved provider is added.
 
 Implemented providers:
 - curated World Bank World Development Indicators (official API)
@@ -14,6 +15,7 @@ Nothing in this module reads or writes emdash.sqlite.
 from __future__ import annotations
 
 import csv
+import calendar
 import datetime as dt
 import hashlib
 import io
@@ -48,6 +50,7 @@ DEFAULT_CACHE_HOURS = float(os.getenv("EMDASH_INDICATOR_CACHE_HOURS", "12"))
 PROVIDER_STATUS_PATH = DEFAULT_CACHE_DIR / "provider_status.json"
 REQUEST_TIMEOUT = (5.0, 30.0)
 MAX_SERIES = 8
+MAX_MARKET_WATCH = 20
 NAME_BY_ISO = {iso: name for iso, name, *_ in config.COUNTRIES}
 IMF_CPI_VERSION = os.getenv("EMDASH_IMF_CPI_VERSION", "5.0.0")
 IMF_API_KEY = os.getenv("EMDASH_IMF_API_KEY", "")
@@ -287,6 +290,8 @@ MARKET_INDICATORS = {
         IndicatorDefinition("yahoo_market", "GBPUSD", "GBP/USD", "Daily", "USD per GBP", "GBP/USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/GBPUSD=X", key_template="GBPUSD=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "USDJPY", "USD/JPY", "Daily", "JPY per USD", "USD/JPY close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/JPY=X", key_template="JPY=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "AUDUSD", "AUD/USD", "Daily", "USD per AUD", "AUD/USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/AUDUSD=X", key_template="AUDUSD=X", asset="FX", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "USDSGD", "USD/SGD", "Daily", "SGD per USD", "USD/SGD delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/SGD=X", key_template="SGD=X", asset="FX", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "USDCNH", "USD/CNH", "Daily", "CNH per USD", "USD/CNH delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CNH=X", key_template="CNH=X", asset="FX", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "SPX", "S&P 500", "Daily", "Index", "S&P 500 close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EGSPC", key_template="^GSPC", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "NASDAQ", "Nasdaq Composite", "Daily", "Index", "Nasdaq Composite close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EIXIC", key_template="^IXIC", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "DOW", "Dow Jones Industrial Average", "Daily", "Index", "DJIA close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EDJI", key_template="^DJI", asset="Equity index", semantic_type="price"),
@@ -294,6 +299,18 @@ MARKET_INDICATORS = {
         IndicatorDefinition("yahoo_market", "HSI", "Hang Seng Index", "Daily", "Index", "Hang Seng Index close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EHSI", key_template="^HSI", asset="Equity index", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "BTCUSD", "Bitcoin / USD", "Daily", "USD", "BTC-USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/BTC-USD", key_template="BTC-USD", asset="Crypto", semantic_type="price"),
         IndicatorDefinition("yahoo_market", "ETHUSD", "Ether / USD", "Daily", "USD", "ETH-USD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/ETH-USD", key_template="ETH-USD", asset="Crypto", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "VIX", "CBOE Volatility Index", "Daily", "Index", "VIX close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5EVIX", key_template="^VIX", asset="Volatility", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "US10Y", "US 10-Year Treasury yield", "Daily", "%", "US 10-year Treasury yield index close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5ETNX", key_template="^TNX", asset="Rates", semantic_type="rate"),
+        IndicatorDefinition("yahoo_market", "DXY", "US Dollar Index", "Daily", "Index", "ICE US Dollar Index close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/DX-Y.NYB", key_template="DX-Y.NYB", asset="FX", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "EEM", "iShares MSCI Emerging Markets ETF", "Daily", "USD", "EEM adjusted market close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/EEM", key_template="EEM", asset="Equity ETF", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "EMB", "iShares J.P. Morgan USD EM Bond ETF", "Daily", "USD", "EMB adjusted market close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/EMB", key_template="EMB", asset="Bond ETF", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "STOXX50", "EURO STOXX 50", "Daily", "Index", "EURO STOXX 50 close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/%5ESTOXX50E", key_template="^STOXX50E", asset="Equity index", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "SHCOMP", "Shanghai Composite", "Daily", "Index", "Shanghai Composite close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/000001.SS", key_template="000001.SS", asset="Equity index", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "CSI300", "CSI 300", "Daily", "Index", "CSI 300 delayed daily close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/000300.SS", key_template="000300.SS", asset="Equity index", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "USDCHF", "USD/CHF", "Daily", "CHF per USD", "USD/CHF close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CHF=X", key_template="CHF=X", asset="FX", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "USDCAD", "USD/CAD", "Daily", "CAD per USD", "USD/CAD close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/CAD=X", key_template="CAD=X", asset="FX", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "NATGAS", "Natural gas front-month", "Daily", "USD/MMBtu", "Front-month Henry Hub natural-gas futures close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/NG=F", key_template="NG=F", asset="Commodity", semantic_type="price"),
+        IndicatorDefinition("yahoo_market", "SILVER", "Silver front-month", "Daily", "USD/oz", "Front-month silver futures close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/SI=F", key_template="SI=F", asset="Commodity", semantic_type="price"),
     )
 }
 
@@ -1267,3 +1284,162 @@ class ProviderService:
 
 
 SERVICE = ProviderService()
+
+
+# ---------------------------------------------------------------------------
+# Market Watch snapshots
+# ---------------------------------------------------------------------------
+# Market Watch deliberately consumes the same provider contract and JsonCache as
+# Indicator Analysis.  The UI passes provider/code pairs; this layer owns the
+# history request, return calculations and freshness labels.  A future approved
+# Bloomberg/Fabric adapter can therefore be registered on ProviderService and
+# used here without changing the Market Watch component contract.
+
+def _month_shift(value: dt.date, months: int) -> dt.date:
+    month_index = value.year * 12 + value.month - 1 + months
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    return dt.date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
+
+
+def _market_watch_baseline(records: list[dict[str, Any]], target: dt.date | None = None,
+                           previous_observation: bool = False) -> float | None:
+    baseline = None
+    if previous_observation and len(records) > 1:
+        baseline = records[-2].get("value")
+    elif target is not None:
+        for row in reversed(records):
+            try:
+                if dt.date.fromisoformat(str(row.get("date", ""))[:10]) <= target:
+                    baseline = row.get("value"); break
+            except ValueError:
+                continue
+    try:
+        value = float(baseline)
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _market_watch_change(records: list[dict[str, Any]], latest_value: float,
+                         semantic_type: str = "price", target: dt.date | None = None,
+                         previous_observation: bool = False) -> float | None:
+    baseline = _market_watch_baseline(records, target, previous_observation)
+    if baseline is None:
+        return None
+    latest = float(latest_value)
+    if semantic_type in ("rate", "spread"):
+        return (latest - baseline) * 100.0
+    return None if baseline == 0 else (latest / baseline - 1.0) * 100.0
+
+
+def market_watch_snapshot(result: dict[str, Any], now: dt.datetime | None = None,
+                          spark_points: int = 30) -> dict[str, Any]:
+    """Convert one provider result into a latest-available delayed daily snapshot."""
+    now = now or dt.datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    records = []
+    for row in result.get("records", []):
+        try:
+            numeric = float(row.get("value")); date = dt.date.fromisoformat(str(row.get("date", ""))[:10])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(numeric):
+            records.append({**row, "date": date.isoformat(), "value": numeric})
+    records.sort(key=lambda row: row["date"])
+    if not records:
+        raise ProviderError("Market Watch received no usable observations.")
+    meta = result.get("meta", {}); latest = records[-1]
+    latest_date = dt.date.fromisoformat(latest["date"]); latest_value = float(latest["value"])
+    semantic_type = str(meta.get("semantic_type") or "price").lower()
+    age_days = max(0, (now.date() - latest_date).days)
+    if age_days <= 3: freshness, freshness_tone = "Latest daily", "fresh"
+    elif age_days <= 7: freshness, freshness_tone = "Delayed", "delayed"
+    else: freshness, freshness_tone = "Stale", "stale"
+    prior_year_close = dt.date(latest_date.year, 1, 1) - dt.timedelta(days=1)
+    spark = records[-max(2, int(spark_points or 30)):]
+    def change(**kwargs):
+        return _market_watch_change(records, latest_value, semantic_type, **kwargs)
+    return {
+        "request_id": meta.get("request_id", ""), "provider": meta.get("provider", ""),
+        "provider_label": meta.get("provider_label", ""),
+        "indicator": meta.get("series_code", meta.get("indicator", "")),
+        "label": meta.get("label", meta.get("series_code", "")),
+        "asset": meta.get("geography_label", meta.get("geography", "Market")),
+        "unit": meta.get("unit", ""), "semantic_type": semantic_type,
+        "change_unit": "bp" if semantic_type in ("rate", "spread") else "%",
+        "last": latest_value, "as_of": latest_date.isoformat(),
+        "change_1d": change(previous_observation=True),
+        "change_1w": change(target=latest_date - dt.timedelta(days=7)),
+        "change_1m": change(target=_month_shift(latest_date, -1)),
+        "change_ytd": change(target=prior_year_close),
+        "sparkline": [{"date": row["date"], "value": row["value"]} for row in spark],
+        "retrieved_at": meta.get("retrieved_at", ""), "cache_status": meta.get("cache_status", ""),
+        "freshness": freshness, "freshness_tone": freshness_tone, "age_days": age_days,
+        "warning": meta.get("warning", ""), "source_url": meta.get("source_url", ""),
+        "data_basis": "Latest available delayed daily observation",
+    }
+
+class MarketWatchService:
+    """Provider-neutral, cache-reusing snapshot service for at most 20 rows."""
+
+    def __init__(self, provider_service: ProviderService = SERVICE):
+        self.provider_service = provider_service
+
+    @staticmethod
+    def _request(item: dict[str, Any]) -> SeriesRequest:
+        provider = str(item.get("provider") or "yahoo_market")
+        indicator = str(item.get("indicator") or "")
+        if not indicator:
+            raise ProviderError("Market Watch instrument has no series code.")
+        geography = str(item.get("geography") or
+                        ("Market" if provider == "yahoo_market" else ""))
+        return SeriesRequest(str(item.get("uid") or indicator), provider,
+                             geography, indicator, dict(item.get("options") or {}))
+
+    @staticmethod
+    def history(now: dt.datetime | None = None) -> HistoryWindow:
+        now = now or dt.datetime.now(UTC)
+        # Previous calendar-year close is needed for YTD.  An extra year also
+        # provides a resilient sparkline/cache window around holidays.
+        return HistoryWindow("custom", f"{now.year - 2}-01-01", now.date().isoformat())
+
+    def fetch(self, instruments: Iterable[dict[str, Any]], force: bool = False,
+              now: dt.datetime | None = None) -> dict[str, Any]:
+        now = now or dt.datetime.now(UTC)
+        rows = list(instruments or [])[:MAX_MARKET_WATCH]
+        requests_list, errors = [], []
+        for item in rows:
+            try:
+                requests_list.append(self._request(item))
+            except Exception as exc:
+                errors.append({"request_id": str(item.get("uid", "")),
+                               "message": safe_error(exc)})
+        if not requests_list:
+            return {"instruments": [], "errors": errors,
+                    "fetched_at": _utc_now()}
+
+        snapshots = []
+        history = self.history(now)
+        with ThreadPoolExecutor(max_workers=min(8, len(requests_list))) as pool:
+            futures = {pool.submit(self.provider_service.fetch_one, request,
+                                   history, force): request
+                       for request in requests_list}
+            for future in as_completed(futures):
+                request = futures[future]
+                try:
+                    snapshots.append(market_watch_snapshot(future.result(), now))
+                except Exception as exc:
+                    errors.append({"request_id": request.request_id,
+                                   "message": safe_error(exc),
+                                   "diagnostic": error_diagnostic(exc, request.provider)})
+        order = {request.request_id: index
+                 for index, request in enumerate(requests_list)}
+        snapshots.sort(key=lambda item: order.get(item["request_id"], 999))
+        errors.sort(key=lambda item: order.get(item.get("request_id", ""), 999))
+        return {"instruments": snapshots, "errors": errors,
+                "fetched_at": _utc_now()}
+
+
+MARKET_WATCH_SERVICE = MarketWatchService()

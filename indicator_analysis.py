@@ -1,8 +1,9 @@
-"""EMDASH Indicator Analysis — dynamic multi-series analyst workflow.
+"""EMDASH Indicator Analysis and Market Watch V1 UI.
 
-Provider I/O lives in indicator_providers.py. This module manages the dynamic
-series editor, deterministic transformations, charting, statistics, diagnostics
-and underlying data. It never reads or writes emdash.sqlite.
+Provider I/O, Market Watch snapshot calculations and caching live in
+indicator_providers.py. This module manages the provider-neutral watch state/UI,
+the dynamic series editor, deterministic transformations, charting, statistics,
+diagnostics and underlying data. It never reads or writes emdash.sqlite.
 """
 from __future__ import annotations
 
@@ -21,9 +22,9 @@ from dash import ALL, Input, Output, State, ctx, dash_table, dcc, html, no_updat
 
 import config
 from indicator_providers import (
-    FRED_INDICATORS, MAX_SERIES, MARKET_INDICATORS, PROVIDER_LABELS, SERVICE,
-    GembridgeExcelProvider, HistoryWindow, SeriesRequest, catalogue,
-    indicator_options,
+    FRED_INDICATORS, MAX_MARKET_WATCH, MAX_SERIES, MARKET_INDICATORS,
+    MARKET_WATCH_SERVICE, PROVIDER_LABELS, SERVICE, GembridgeExcelProvider,
+    HistoryWindow, SeriesRequest, catalogue, indicator_options,
 )
 
 
@@ -63,6 +64,135 @@ TRANSFORM_LABELS = {
     "rolling_mean": "Rolling average", "rebase": "Rebased index",
     "rolling_zscore": "Rolling Z-score",
 }
+MARKET_WATCH_PROVIDER_OPTIONS = [
+    {"label": PROVIDER_LABELS["yahoo_market"], "value": "yahoo_market"},
+]
+
+
+def default_market_watch() -> dict[str, Any]:
+    """Compact initial board; all state remains in emdash_state.json."""
+    groups = [
+        {"uid": "mw-global", "name": "Global risk", "collapsed": False},
+        {"uid": "mw-fx", "name": "FX", "collapsed": False},
+        {"uid": "mw-commodities", "name": "Commodities", "collapsed": False},
+    ]
+    instruments = [
+        ("mw-spx", "SPX", "mw-global"), ("mw-vix", "VIX", "mw-global"),
+        ("mw-us10y", "US10Y", "mw-global"), ("mw-eem", "EEM", "mw-global"),
+        ("mw-eurusd", "EURUSD", "mw-fx"), ("mw-usdjpy", "USDJPY", "mw-fx"),
+        ("mw-dxy", "DXY", "mw-fx"), ("mw-brent", "BRENT", "mw-commodities"),
+        ("mw-gold", "GOLD", "mw-commodities"),
+    ]
+    return {
+        "collapsed": False,
+        "groups": groups,
+        "instruments": [
+            {"uid": uid, "provider": "yahoo_market", "indicator": indicator,
+             "geography": "Market", "group_uid": group_uid}
+            for uid, indicator, group_uid in instruments
+        ],
+    }
+
+
+def _normalise_market_watch(value: dict[str, Any] | None) -> dict[str, Any]:
+    raw = copy.deepcopy(value) if isinstance(value, dict) else default_market_watch()
+    groups, seen_groups = [], set()
+    for index, item in enumerate(raw.get("groups") or []):
+        uid = str(item.get("uid") or f"mw-group-{index}-{_uid()}")
+        if uid in seen_groups:
+            continue
+        seen_groups.add(uid)
+        groups.append({"uid": uid, "name": str(item.get("name") or "Group")[:48],
+                       "collapsed": bool(item.get("collapsed", False))})
+    if not groups:
+        groups = [{"uid": "mw-main", "name": "Markets", "collapsed": False}]
+        seen_groups = {"mw-main"}
+    instruments, seen_uids = [], set()
+    for index, item in enumerate((raw.get("instruments") or [])[:MAX_MARKET_WATCH]):
+        provider = str(item.get("provider") or "yahoo_market")
+        indicator = str(item.get("indicator") or "")
+        if not indicator or indicator not in catalogue(provider):
+            continue
+        uid = str(item.get("uid") or f"mw-{index}-{_uid()}")
+        if uid in seen_uids:
+            uid = f"{uid}-{_uid()}"
+        seen_uids.add(uid)
+        group_uid = str(item.get("group_uid") or groups[0]["uid"])
+        if group_uid not in seen_groups:
+            group_uid = groups[0]["uid"]
+        instruments.append({
+            "uid": uid, "provider": provider, "indicator": indicator,
+            "geography": str(item.get("geography") or
+                             ("Market" if provider == "yahoo_market" else "")),
+            "group_uid": group_uid,
+            "options": dict(item.get("options") or {}),
+        })
+    return {"collapsed": bool(raw.get("collapsed", False)),
+            "groups": groups, "instruments": instruments}
+
+
+def mutate_market_watch(value: dict[str, Any] | None, operation: str,
+                        uid: str | None = None, payload: Any = None) -> dict[str, Any]:
+    """Pure Market Watch state reducer used by callbacks and local tests."""
+    state = _normalise_market_watch(value)
+    groups, instruments = state["groups"], state["instruments"]
+    if operation == "toggle_outer":
+        state["collapsed"] = not state["collapsed"]
+    elif operation == "add_group":
+        name = str(payload or "").strip()
+        if name and len(groups) < 10:
+            groups.append({"uid": f"mw-group-{_uid()}", "name": name[:48],
+                           "collapsed": False})
+    elif operation == "add_instrument" and isinstance(payload, dict):
+        provider = str(payload.get("provider") or "yahoo_market")
+        indicator = str(payload.get("indicator") or "")
+        duplicate = any(row["provider"] == provider and
+                        row["indicator"] == indicator for row in instruments)
+        if (not duplicate and len(instruments) < MAX_MARKET_WATCH and
+                indicator in catalogue(provider)):
+            group_uid = str(payload.get("group_uid") or groups[0]["uid"])
+            if not any(group["uid"] == group_uid for group in groups):
+                group_uid = groups[0]["uid"]
+            instruments.append({"uid": f"mw-item-{_uid()}",
+                                "provider": provider, "indicator": indicator,
+                                "geography": "Market", "group_uid": group_uid,
+                                "options": {}})
+    elif operation.startswith("group_"):
+        pos = next((i for i, row in enumerate(groups) if row["uid"] == uid), None)
+        if pos is not None:
+            action = operation[6:]
+            if action == "toggle":
+                groups[pos]["collapsed"] = not groups[pos]["collapsed"]
+            elif action == "up" and pos > 0:
+                groups[pos - 1], groups[pos] = groups[pos], groups[pos - 1]
+            elif action == "down" and pos < len(groups) - 1:
+                groups[pos + 1], groups[pos] = groups[pos], groups[pos + 1]
+            elif action == "delete" and len(groups) > 1:
+                destination = next(group["uid"] for i, group in enumerate(groups)
+                                   if i != pos)
+                for item in instruments:
+                    if item["group_uid"] == uid:
+                        item["group_uid"] = destination
+                groups.pop(pos)
+    elif operation.startswith("instrument_"):
+        pos = next((i for i, row in enumerate(instruments) if row["uid"] == uid), None)
+        if pos is not None:
+            action = operation[11:]
+            if action == "delete":
+                instruments.pop(pos)
+            elif action == "group":
+                if any(group["uid"] == payload for group in groups):
+                    instruments[pos]["group_uid"] = payload
+            elif action in ("up", "down"):
+                group_uid = instruments[pos]["group_uid"]
+                member_positions = [i for i, row in enumerate(instruments)
+                                    if row["group_uid"] == group_uid]
+                member_index = member_positions.index(pos)
+                target_member = member_index + (-1 if action == "up" else 1)
+                if 0 <= target_member < len(member_positions):
+                    target = member_positions[target_member]
+                    instruments[pos], instruments[target] = instruments[target], instruments[pos]
+    return _normalise_market_watch(state)
 
 
 def _uid() -> str:
@@ -218,15 +348,188 @@ def _series_card(item: dict[str, Any], index: int, excel_catalog: list[dict[str,
     return html.Div([header, editor], className="ia-series-card ia-series-disabled" if not item.get("included", True) else "ia-series-card")
 
 
+def _mw_price(value: Any, unit: str) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(number):
+        return "—"
+    decimals = 4 if " per " in str(unit).lower() else (3 if abs(number) < 10 else 2)
+    return f"{number:,.{decimals}f}"
+
+
+def _mw_change(value: Any, unit: str = "%") -> tuple[str, str]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—", "mw-change mw-change--flat"
+    if not math.isfinite(number):
+        return "—", "mw-change mw-change--flat"
+    tone = "positive" if number > 0 else ("negative" if number < 0 else "flat")
+    text = f"{number:+.1f} bp" if unit == "bp" else f"{number:+.2f}%"
+    return text, f"mw-change mw-change--{tone}"
+
+def _mw_sparkline(points: list[dict[str, Any]], colour: str) -> go.Figure:
+    x = [row.get("date") for row in points or []]
+    y = [row.get("value") for row in points or []]
+    fig = go.Figure(go.Scatter(x=x, y=y, mode="lines",
+                               line={"color": colour, "width": 1.6},
+                               hoverinfo="skip"))
+    fig.update_layout(height=34, width=112, margin={"l": 1, "r": 1, "t": 2, "b": 2},
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      showlegend=False, xaxis={"visible": False, "fixedrange": True},
+                      yaxis={"visible": False, "fixedrange": True})
+    return fig
+
+
+def _mw_instrument_row(item: dict[str, Any], snapshot: dict[str, Any] | None,
+                       group_options: list[dict[str, str]], index: int,
+                       group_size: int) -> html.Div:
+    definition = catalogue(item["provider"]).get(item["indicator"])
+    snapshot = snapshot or {}
+    values = []
+    change_unit = snapshot.get("change_unit", "%")
+    for key in ("change_1d", "change_1w", "change_1m", "change_ytd"):
+        text, class_name = _mw_change(snapshot.get(key), change_unit)
+        values.append(html.Div(text, className=class_name))
+    last_change = snapshot.get("change_1d")
+    spark_colour = P["good"] if isinstance(last_change, (int, float)) and last_change > 0 else (
+        P["bad"] if isinstance(last_change, (int, float)) and last_change < 0 else P["navy3"])
+    freshness = snapshot.get("freshness", "Awaiting data")
+    freshness_tone = snapshot.get("freshness_tone", "unknown")
+    freshness_title = (
+        f"Market observation: {snapshot.get('as_of') or 'not loaded'}; "
+        f"retrieved: {str(snapshot.get('retrieved_at') or 'not loaded').replace('T', ' ')}; "
+        f"status: {snapshot.get('cache_status') or 'not loaded'}"
+    )
+    label = snapshot.get("label") or (definition.label if definition else item["indicator"])
+    unit = snapshot.get("unit") or (definition.unit if definition else "")
+    return html.Div([
+        html.Div([
+            html.Div(item["indicator"], className="mw-code"),
+            html.Div(label, className="mw-label", title=label),
+            html.Div(PROVIDER_LABELS.get(item["provider"], item["provider"]),
+                     className="mw-provider"),
+        ], className="mw-instrument"),
+        html.Div([html.Div(_mw_price(snapshot.get("last"), unit), className="mw-last"),
+                  html.Div(unit, className="mw-unit")], className="mw-price"),
+        *values,
+        html.Div(dcc.Graph(figure=_mw_sparkline(snapshot.get("sparkline", []), spark_colour),
+                           config={"displayModeBar": False, "staticPlot": True,
+                                   "responsive": False}), className="mw-spark"),
+        html.Div([
+            html.Span(freshness, className=f"mw-fresh mw-fresh--{freshness_tone}"),
+            html.Span(snapshot.get("as_of") or "—", className="mw-asof"),
+        ], className="mw-freshness", title=freshness_title),
+        html.Div([
+            dcc.Dropdown(id={"type": "mw-instrument-group", "uid": item["uid"]},
+                         value=item["group_uid"], options=group_options,
+                         clearable=False, searchable=False,
+                         className="mw-group-select"),
+            html.Button("↑", id={"type": "mw-instrument-action", "uid": item["uid"], "action": "up"},
+                        n_clicks=0, className="mw-icon-btn", title="Move up in group",
+                        disabled=index == 0),
+            html.Button("↓", id={"type": "mw-instrument-action", "uid": item["uid"], "action": "down"},
+                        n_clicks=0, className="mw-icon-btn", title="Move down in group",
+                        disabled=index >= group_size - 1),
+            html.Button("Chart in IA", id={"type": "mw-chart", "uid": item["uid"]},
+                        n_clicks=0, className="mw-chart-btn",
+                        title="Add or focus this instrument in Indicator Analysis"),
+            html.Button("×", id={"type": "mw-instrument-action", "uid": item["uid"], "action": "delete"},
+                        n_clicks=0, className="mw-icon-btn mw-remove", title="Remove"),
+        ], className="mw-row-actions"),
+    ], className="mw-row")
+
+
+def _mw_header_row() -> html.Div:
+    return html.Div([
+        html.Div("Instrument", className="mw-h-instrument"), html.Div("Last", className="mw-h-last"),
+        html.Div("1D"), html.Div("1W"), html.Div("1M"), html.Div("YTD"),
+        html.Div("30 obs.", className="mw-h-spark"), html.Div("Freshness"),
+        html.Div("Actions", className="mw-h-actions"),
+    ], className="mw-column-head")
+
+
+def _market_watch_body(config_value: dict[str, Any], data: dict[str, Any] | None) -> html.Div:
+    config_value = _normalise_market_watch(config_value)
+    snapshots = {row.get("request_id"): row for row in (data or {}).get("instruments", [])}
+    group_options = [{"label": row["name"], "value": row["uid"]}
+                     for row in config_value["groups"]]
+    groups = []
+    for group_index, group in enumerate(config_value["groups"]):
+        members = [row for row in config_value["instruments"]
+                   if row["group_uid"] == group["uid"]]
+        group_head = html.Div([
+            html.Button("▸" if group["collapsed"] else "▾",
+                        id={"type": "mw-group-action", "uid": group["uid"], "action": "toggle"},
+                        n_clicks=0, className="mw-group-toggle"),
+            html.Div(group["name"], className="mw-group-name"),
+            html.Div(f"{len(members)} instrument{'s' if len(members) != 1 else ''}",
+                     className="mw-group-count"),
+            html.Button("↑", id={"type": "mw-group-action", "uid": group["uid"], "action": "up"},
+                        n_clicks=0, className="mw-icon-btn", disabled=group_index == 0,
+                        title="Move group up"),
+            html.Button("↓", id={"type": "mw-group-action", "uid": group["uid"], "action": "down"},
+                        n_clicks=0, className="mw-icon-btn",
+                        disabled=group_index >= len(config_value["groups"]) - 1,
+                        title="Move group down"),
+            html.Button("Delete group", id={"type": "mw-group-action", "uid": group["uid"], "action": "delete"},
+                        n_clicks=0, className="mw-group-delete",
+                        disabled=len(config_value["groups"]) <= 1,
+                        title="Move its instruments to another group and delete this group"),
+        ], className="mw-group-head")
+        rows = [] if group["collapsed"] else [
+            _mw_instrument_row(item, snapshots.get(item["uid"]), group_options,
+                               index, len(members))
+            for index, item in enumerate(members)
+        ]
+        groups.append(html.Div([group_head] + ([] if group["collapsed"] else [_mw_header_row()] + rows),
+                               className="mw-group"))
+
+    instrument_options = indicator_options("yahoo_market")
+    existing = {(row["provider"], row["indicator"])
+                for row in config_value["instruments"]}
+    instrument_options = [dict(option, disabled=("yahoo_market", option["value"]) in existing)
+                          for option in instrument_options]
+    controls = html.Div([
+        _field(dcc.Dropdown(id="mw-add-provider", value="yahoo_market",
+                            options=MARKET_WATCH_PROVIDER_OPTIONS, clearable=False,
+                            searchable=False), "Source"),
+        _field(dcc.Dropdown(id="mw-add-indicator", value="SPX",
+                            options=instrument_options, clearable=False,
+                            searchable=True), "Instrument"),
+        _field(dcc.Dropdown(id="mw-add-group", value=config_value["groups"][0]["uid"],
+                            options=group_options, clearable=False,
+                            searchable=False), "Group"),
+        html.Button("Add instrument", id="mw-add-instrument", n_clicks=0,
+                    className="emd-btn", disabled=len(config_value["instruments"]) >= MAX_MARKET_WATCH),
+        dcc.Input(id="mw-new-group-name", type="text", debounce=True,
+                  placeholder="New group name", className="emd-input mw-new-group"),
+        html.Button("Add group", id="mw-add-group-button", n_clicks=0,
+                    className="emd-btn emd-btn--ghost",
+                    disabled=len(config_value["groups"]) >= 10),
+    ], className="mw-controls")
+    note = html.Div([
+        html.Span("Yahoo chart data · latest available delayed daily observations · cached through the Indicator Analysis provider layer."),
+        html.Span(id="mw-chart-status", className="mw-chart-status"),
+    ], className="mw-note")
+    return html.Div([controls, note] + groups)
+
+
 def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
     state = state or {}
     stored = state.get("ia_series_config")
     if not isinstance(stored, list) or not stored: stored = default_series()
+    market_watch = _normalise_market_watch(state.get("ia_market_watch"))
     return dcc.Tab(label="Indicator Analysis", value="country", className="emd-tab", selected_className="emd-tab--selected", children=[
         dcc.Store(id="ia-series-config", data=stored, storage_type="memory"),
         dcc.Store(id="ia-excel-catalog", data=[], storage_type="memory"),
         dcc.Store(id="ia-fred-catalog", data=[], storage_type="memory"),
         dcc.Store(id="ia-data-store", storage_type="memory"),
+        dcc.Store(id="mw-config", data=market_watch, storage_type="memory"),
+        dcc.Store(id="mw-data", storage_type="memory"),
+        dcc.Store(id="mw-chart-request", storage_type="memory"),
         html.Div([
             html.Div([html.Div("Indicator Analysis", className="ia-page-title"), html.Div("Build and compare up to eight live or workbook series.", className="ia-page-subtitle")]),
             html.Div([
@@ -235,6 +538,22 @@ def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
                 html.Button("Add Series", id="ia-add-series", n_clicks=0, className="emd-btn"),
             ], className="ia-page-actions"),
         ], className="ia-page-head"),
+        html.Div([
+            html.Div([
+                html.Button("▾", id="mw-toggle", n_clicks=0,
+                            className="mw-island-toggle", title="Expand/collapse Market Watch"),
+                html.Div([
+                    html.Div("Market Watch", className="mw-title"),
+                    html.Div("Delayed daily market snapshot; use Chart in IA for deeper analysis.",
+                             className="mw-subtitle"),
+                ], className="mw-title-wrap"),
+                html.Div(id="mw-count", className="mw-count"),
+                html.Div(id="mw-status", className="mw-status"),
+                html.Button("Refresh", id="mw-refresh", n_clicks=0,
+                            className="emd-btn emd-btn--ghost"),
+            ], className="mw-island-head"),
+            html.Div(id="mw-island-body", className="mw-island-body"),
+        ], className="mw-island"),
         html.Div([html.Div(id="ia-series-count", className="ia-series-count"), html.Div(id="ia-series-list")], className="ia-series-workspace"),
 
         html.Details([
@@ -377,6 +696,26 @@ def mutate_series_config(configs: list[dict[str, Any]], operation: str,
                     rows[pos].get("fred_definition", {}))
             meta = _definition_meta(rows[pos], excel_catalog or [], fred_catalog or [])
             rows[pos]["transform"] = default_transform(meta["frequency"], meta["semantic_type"])
+    return _normalise_config(rows, excel_catalog or [], fred_catalog or [])
+
+
+def add_market_watch_to_series(configs: list[dict[str, Any]],
+                               request: dict[str, Any], excel_catalog=None,
+                               fred_catalog=None) -> list[dict[str, Any]]:
+    """Add a watch instrument to IA, or focus the existing matching series."""
+    rows = _normalise_config(copy.deepcopy(configs or []), excel_catalog or [],
+                             fred_catalog or [])
+    provider, indicator = request.get("provider"), request.get("indicator")
+    existing = next((row for row in rows if row.get("provider") == provider and
+                     row.get("indicator") == indicator), None)
+    if existing:
+        existing["included"] = True
+        existing["collapsed"] = False
+        return _normalise_config(rows, excel_catalog or [], fred_catalog or [])
+    if len(rows) >= MAX_SERIES or indicator not in catalogue(str(provider)):
+        return rows
+    rows.append(_new_series(str(provider), str(request.get("geography") or "Market"),
+                            str(indicator), unused_colour(rows), False))
     return _normalise_config(rows, excel_catalog or [], fred_catalog or [])
 
 
@@ -611,13 +950,139 @@ def _diagnostic_text(payload):
 
 
 def register(app):
+    @app.callback(
+        Output("mw-island-body", "children"), Output("mw-island-body", "style"),
+        Output("mw-count", "children"), Output("mw-toggle", "children"),
+        Input("mw-config", "data"), Input("mw-data", "data"))
+    def _render_market_watch(config_value, data):
+        config_value = _normalise_market_watch(config_value)
+        count = len(config_value["instruments"])
+        style = {"display": "none"} if config_value["collapsed"] else {}
+        return (_market_watch_body(config_value, data or {}), style,
+                f"{count} / {MAX_MARKET_WATCH}",
+                "▸" if config_value["collapsed"] else "▾")
+
+    @app.callback(
+        Output("mw-config", "data"),
+        Input("mw-toggle", "n_clicks"), Input("mw-add-instrument", "n_clicks"),
+        Input("mw-add-group-button", "n_clicks"),
+        Input({"type": "mw-group-action", "uid": ALL, "action": ALL}, "n_clicks"),
+        Input({"type": "mw-instrument-action", "uid": ALL, "action": ALL}, "n_clicks"),
+        Input({"type": "mw-instrument-group", "uid": ALL}, "value"),
+        State({"type": "mw-group-action", "uid": ALL, "action": ALL}, "id"),
+        State({"type": "mw-instrument-action", "uid": ALL, "action": ALL}, "id"),
+        State({"type": "mw-instrument-group", "uid": ALL}, "id"),
+        State("mw-config", "data"), State("mw-add-provider", "value"),
+        State("mw-add-indicator", "value"), State("mw-add-group", "value"),
+        State("mw-new-group-name", "value"), prevent_initial_call=True)
+    def _update_market_watch(_toggle, _add, _add_group, group_clicks,
+                             instrument_clicks, group_values, group_action_ids,
+                             instrument_action_ids, group_field_ids, config_value,
+                             provider, indicator, group_uid, group_name):
+        state = _normalise_market_watch(config_value)
+        trig = ctx.triggered_id
+        if trig == "mw-toggle" and _toggle:
+            return mutate_market_watch(state, "toggle_outer")
+        if trig == "mw-add-instrument" and _add:
+            updated = mutate_market_watch(
+                state, "add_instrument", payload={"provider": provider,
+                "indicator": indicator, "group_uid": group_uid})
+            return updated if updated != state else no_update
+        if trig == "mw-add-group-button" and _add_group:
+            updated = mutate_market_watch(state, "add_group", payload=group_name)
+            return updated if updated != state else no_update
+        if isinstance(trig, dict) and trig.get("type") == "mw-group-action":
+            clicks = {json.dumps(item, sort_keys=True): count for item, count in
+                      zip(group_action_ids or [], group_clicks or [])}
+            if not clicks.get(json.dumps(trig, sort_keys=True)):
+                return no_update
+            updated = mutate_market_watch(state, f"group_{trig.get('action')}",
+                                          uid=trig.get("uid"))
+            return updated if updated != state else no_update
+        if isinstance(trig, dict) and trig.get("type") == "mw-instrument-action":
+            clicks = {json.dumps(item, sort_keys=True): count for item, count in
+                      zip(instrument_action_ids or [], instrument_clicks or [])}
+            if not clicks.get(json.dumps(trig, sort_keys=True)):
+                return no_update
+            updated = mutate_market_watch(state,
+                f"instrument_{trig.get('action')}", uid=trig.get("uid"))
+            return updated if updated != state else no_update
+        if isinstance(trig, dict) and trig.get("type") == "mw-instrument-group":
+            values = {json.dumps(item, sort_keys=True): value for item, value in
+                      zip(group_field_ids or [], group_values or [])}
+            updated = mutate_market_watch(state, "instrument_group",
+                                          uid=trig.get("uid"),
+                                          payload=values.get(json.dumps(trig, sort_keys=True)))
+            return updated if updated != state else no_update
+        return no_update
+
+    @app.callback(
+        Output("mw-data", "data"), Output("mw-status", "children"),
+        Output("mw-status", "className"),
+        Input("mw-refresh", "n_clicks"), Input("mw-config", "data"),
+        prevent_initial_call=False)
+    def _retrieve_market_watch(_clicks, config_value):
+        config_value = _normalise_market_watch(config_value)
+        force = ctx.triggered_id == "mw-refresh"
+        try:
+            payload = MARKET_WATCH_SERVICE.fetch(config_value["instruments"], force=force)
+        except Exception as exc:
+            payload = {"instruments": [], "errors": [{"message": str(exc)}]}
+        loaded = len(payload.get("instruments", []))
+        errors = len(payload.get("errors", []))
+        stale = sum(row.get("freshness_tone") == "stale"
+                    for row in payload.get("instruments", []))
+        delayed = sum(row.get("freshness_tone") == "delayed"
+                      for row in payload.get("instruments", []))
+        text = f"{loaded} loaded"
+        if delayed:
+            text += f" · {delayed} delayed"
+        if stale:
+            text += f" · {stale} stale"
+        if errors:
+            text += f" · {errors} failed"
+        class_name = "mw-status mw-status--error" if not loaded and errors else (
+            "mw-status mw-status--warning" if errors or stale else "mw-status mw-status--ok")
+        return payload, text, class_name
+
+    @app.callback(
+        Output("mw-chart-request", "data"), Output("mw-chart-status", "children"),
+        Input({"type": "mw-chart", "uid": ALL}, "n_clicks"),
+        State({"type": "mw-chart", "uid": ALL}, "id"),
+        State("mw-config", "data"), State("ia-series-config", "data"),
+        prevent_initial_call=True)
+    def _request_market_watch_chart(clicks, ids, config_value, series_config):
+        trig = ctx.triggered_id
+        if not isinstance(trig, dict):
+            return no_update, no_update
+        clicks_by_id = {json.dumps(item, sort_keys=True): count for item, count in
+                        zip(ids or [], clicks or [])}
+        if not clicks_by_id.get(json.dumps(trig, sort_keys=True)):
+            return no_update, no_update
+        item = next((row for row in _normalise_market_watch(config_value)["instruments"]
+                     if row["uid"] == trig.get("uid")), None)
+        if not item:
+            return no_update, "Instrument is no longer on the watch list."
+        existing = any(row.get("provider") == item["provider"] and
+                       row.get("indicator") == item["indicator"]
+                       for row in (series_config or []))
+        if not existing and len(series_config or []) >= MAX_SERIES:
+            return no_update, f"Indicator Analysis already has {MAX_SERIES} series; remove one first."
+        request = {**item, "requested_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+        message = (f"Focused {item['indicator']} in Indicator Analysis." if existing else
+                   f"Added {item['indicator']} to Indicator Analysis.")
+        return request, message
+
     @app.callback(Output("ia-series-list","children"),Output("ia-series-count","children"),Output("ia-add-series","disabled"),Input("ia-series-config","data"),Input("ia-excel-catalog","data"),Input("ia-fred-catalog","data"))
     def _render_series(configs,excel_catalog,fred_catalog):
         configs=_normalise_config(configs or [],excel_catalog or [],fred_catalog or []); return [_series_card(item,i,excel_catalog or [],fred_catalog or []) for i,item in enumerate(configs)],f"{len(configs)} / {MAX_SERIES} series{duplicate_colour_warning(configs)}",len(configs)>=MAX_SERIES
 
-    @app.callback(Output("ia-series-config","data"),Input("ia-add-series","n_clicks"),Input("ia-collapse-all","n_clicks"),Input("ia-expand-all","n_clicks"),Input({"type":"ia-action","uid":ALL,"action":ALL},"n_clicks"),Input({"type":"ia-field","uid":ALL,"field":ALL},"value"),State({"type":"ia-action","uid":ALL,"action":ALL},"id"),State({"type":"ia-field","uid":ALL,"field":ALL},"id"),State("ia-series-config","data"),State("ia-excel-catalog","data"),State("ia-fred-catalog","data"),prevent_initial_call=True)
-    def _update_config(_add,_collapse_all,_expand_all,_actions,field_values,action_ids,field_ids,configs,excel_catalog,fred_catalog):
+    @app.callback(Output("ia-series-config","data"),Input("ia-add-series","n_clicks"),Input("ia-collapse-all","n_clicks"),Input("ia-expand-all","n_clicks"),Input({"type":"ia-action","uid":ALL,"action":ALL},"n_clicks"),Input({"type":"ia-field","uid":ALL,"field":ALL},"value"),Input("mw-chart-request","data"),State({"type":"ia-action","uid":ALL,"action":ALL},"id"),State({"type":"ia-field","uid":ALL,"field":ALL},"id"),State("ia-series-config","data"),State("ia-excel-catalog","data"),State("ia-fred-catalog","data"),prevent_initial_call=True)
+    def _update_config(_add,_collapse_all,_expand_all,_actions,field_values,mw_chart_request,action_ids,field_ids,configs,excel_catalog,fred_catalog):
         configs=_normalise_config(configs or [],excel_catalog or [],fred_catalog or []); trig=ctx.triggered_id
+        if trig=="mw-chart-request" and mw_chart_request:
+            updated=add_market_watch_to_series(configs,mw_chart_request,excel_catalog,fred_catalog)
+            return updated if updated!=configs else no_update
         if trig=="ia-add-series":
             if not _add:return no_update
             updated=mutate_series_config(configs,"add",excel_catalog=excel_catalog,fred_catalog=fred_catalog)

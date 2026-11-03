@@ -1,14 +1,19 @@
 """
-EMDASH :: app.py   (v11)
+EMDASH :: app.py   (v12 · Market Watch V1)
 
 THE DASHBOARD. Reads ONLY through core.py; math via signals.py / event_study.py
 / mrc.py; tagging via news_ingest.py. Styling: assets/emdash.css.
 Editable settings: config.py.
 
 ==============================================================================
-WHAT CHANGED IN v8
+WHAT CHANGED IN v12
 ==============================================================================
-INDICATOR ANALYSIS
+MARKET WATCH V1
+  * Collapsible cross-asset island above the Indicator Analysis workspace.
+  * Up to 20 cached instruments with groups, reordering, freshness, horizon
+    returns, sparklines and one-click Chart in IA hand-off.
+
+INDICATOR ANALYSIS (core multi-series workflow carried forward from v8)
   * Add/collapse/duplicate/reorder/delete workflow for up to eight series.
   * Per-series frequency-aware transformations plus global comparison modes.
   * World Bank, layered IMF DataMapper/SDMX, FRED, Yahoo chart-market and
@@ -2385,6 +2390,7 @@ def _mrc(tab, days, rng):
               Input("f-desk", "value"), Input("f-tier", "value"),
               Input("f-topic", "value"), Input("f-search", "value"),
               Input("ia-series-config", "data"),
+              Input("mw-config", "data"),
               Input("ia-fetch-mode", "value"),
               Input("ia-fetch-custom", "start_date"),
               Input("ia-fetch-custom", "end_date"),
@@ -2406,7 +2412,8 @@ def _mrc(tab, days, rng):
               Input("mrc-days", "value"), Input("mrc-range", "value"),
               prevent_initial_call=True)
 def _persist(tab, columns_by, f_days, f_desk, f_tier, f_topic, f_search,
-             ia_series_config, ia_fetch_mode, ia_fetch_start, ia_fetch_end,
+             ia_series_config, ia_market_watch,
+             ia_fetch_mode, ia_fetch_start, ia_fetch_end,
              ia_global_mode, ia_chart_period, ia_chart_start, ia_chart_end,
              ia_excel_path, ia_excel_sheet, ia_excel_table, ia_excel_format,
              ia_excel_mapping,
@@ -2418,6 +2425,7 @@ def _persist(tab, columns_by, f_days, f_desk, f_tier, f_topic, f_search,
         "f_desk": f_desk, "f_tier": f_tier, "f_topic": f_topic,
         "f_search": f_search,
         "ia_series_config": ia_series_config,
+        "ia_market_watch": ia_market_watch,
         "ia_fetch_mode": ia_fetch_mode,
         "ia_fetch_start": ia_fetch_start, "ia_fetch_end": ia_fetch_end,
         "ia_global_mode": ia_global_mode, "ia_chart_period": ia_chart_period,
