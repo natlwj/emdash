@@ -1,0 +1,37 @@
+{
+  "imf_sdmx": {
+    "availability": "error",
+    "tested_at": "2026-10-26T05:59:40Z",
+    "http_status": "200",
+    "message": "IMF returned 860 numeric values but 860 had blank/unusable TIME_PERIOD values; the SDMX-JSON time-index fallback did not produce dated observations.",
+    "requested_series": "IMF.STA/CPI/5.0.0/USA.CPI._T.IX.M"
+  },
+  "imf_datamapper": {
+    "availability": "error",
+    "tested_at": "2026-10-26T05:59:39Z",
+    "http_status": "403",
+    "message": "The data source returned HTTP 403.",
+    "requested_series": "GGXWDG_NGDP"
+  },
+  "world_bank": {
+    "availability": "available",
+    "tested_at": "2026-10-26T05:59:42Z",
+    "http_status": "200",
+    "message": "",
+    "requested_series": "NY.GDP.MKTP.KD.ZG"
+  },
+  "fred": {
+    "availability": "not configured",
+    "tested_at": "2026-10-26T05:59:38Z",
+    "http_status": "NOT_CONFIGURED",
+    "message": "FRED API key is not configured. Set the FRED_API_KEY environment variable, restart EMDASH, then run Source Test.",
+    "requested_series": "T10Y2Y"
+  },
+  "yahoo_market": {
+    "availability": "available",
+    "tested_at": "2026-10-26T05:59:39Z",
+    "http_status": "200",
+    "message": "",
+    "requested_series": "BZ=F"
+  }
+}

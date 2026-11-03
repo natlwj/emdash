@@ -1,77 +1,73 @@
-# EMDASH Indicator Analysis — focused finishing patch
+# EMDASH Data Coverage & Updates — provider catalogue enhancement
 
-## IMF CPI live retrieval — highest-priority repair
+## Source-coverage interface
 
-- Removed `dimensionAtObservation=AllDimensions` from the primary IMF CPI request.
-- Primary request now uses only:
-  - the existing CPI key `COUNTRY.INDEX_TYPE.COICOP_1999.TYPE_OF_TRANSFORMATION.FREQUENCY`;
-  - `attributes=none`;
-  - `startPeriod` and `endPeriod`;
-  - standard SDMX-CSV 2.0 response headers.
-- Added regression coverage for the target-machine response: HTTP 200, numeric `OBS_VALUE`, valid `COUNTRY=USA` and `INDEX_TYPE=CPI`, but blank `TIME_PERIOD` and zero parsed rows.
-- Numeric values with blank/unparseable periods are no longer reported as generic “no observations.”
-- When the CSV contains values but unusable periods, EMDASH automatically retries the same endpoint/key/date query as SDMX-JSON 2.0.
-- Added SDMX-JSON time-index decoding for dated observations.
-- Diagnostics preserve every attempt, including endpoint, HTTP status, content type, preview, fields, row count, countries, series identifiers and explicit fallback result.
-- Added representative USA and Canada fixtures to validate country decoding and dimension order.
-- IMF scope remains monthly all-items CPI only. No broader IMF coverage is claimed.
+- Replaced the high-level Indicator Analysis source table with six individually collapsible provider summaries.
+- Initial view remains compact; all provider details are closed by default.
+- Added **Expand All** and **Collapse All** controls.
+- Each summary shows:
+  - provider name;
+  - plain-English purpose;
+  - live API versus workbook/internal type;
+  - latest dynamic availability/configuration status;
+  - provider-universe scope;
+  - current EMDASH-exposed scope.
 
-## Semantic transformation safeguards
+## Full EMDASH catalogues
 
-- Added semantic types to series metadata: index, price, raw level, growth rate, rate, ratio, spread, stock, flow and event.
-- Curated provider series now carry semantic metadata.
-- Excel series infer semantic type from unit/label; an optional `semantic_type` metadata column is recognised when provided.
-- Transformation menus now depend on frequency and semantic type.
-- Existing `% YoY` growth/inflation series no longer offer another YoY/MoM/QoQ/period-percent transformation.
-- Growth rates, rates and ratios use Level, percentage-point difference, rolling average and rolling Z-score.
-- CPI index defaults to YoY when newly selected.
-- Market prices, reserves/stocks and CDS-style spreads default to Level.
-- Added percentage-point difference with explicit `pp` units.
-- Units distinguish percentages, percentage points, basis points, prices and indexes.
+Expanded details now enumerate every currently exposed item:
 
-## Focused interface fixes
+- World Bank WDI — 13 indicators
+- IMF DataMapper — 7 annual indicators
+- IMF SDMX — 1 monthly CPI route
+- FRED — 19 curated series plus any persisted searched FRED series
+- Yahoo market data — 15 instruments
+- Gembridge Excel — dynamically discovered configured-workbook series
 
-- Removed the Window/Colour label collision through responsive grid sizing, wrapped labels and hiding the rolling-window input unless a rolling transformation is selected.
-- Market series show an Asset class display instead of a meaningless Geography selector.
-- Excel series show geography from workbook metadata.
-- Added Collapse All and Expand All.
-- Newly added and duplicated cards open expanded; collapsed state remains in persisted series configuration.
-- Add and Duplicate automatically use the next unused EMDASH colour.
-- Manual duplicate colours remain allowed and produce a visible warning.
-- Collapsed headers retain series label, source, frequency, transformation and colour marker.
+Each row shows, where available:
 
-## Chart and statistics correctness
+- display label;
+- provider code, ticker or series ID;
+- category;
+- unit;
+- frequency;
+- geography or asset class;
+- earliest available/retrieved observation;
+- latest available/retrieved observation;
+- metadata/retrieval timestamp;
+- concise source or methodology note.
 
-- Added Native-mode scale-dominance detection for same-unit series. It warns when one series is at least 100× another without changing the selected mode.
-- Native mode still uses at most two compatible units with left/right axes and blocks more than two units.
-- No interpolation, forward fill or silent mode changes were added.
-- Series Statistics now include Previous and contextual Change.
-- Change uses percentage points for percentage/rate series and basis points for spread series.
-- Formatting is contextual for prices, FX, indexes, percentages, pp, bp and large values.
-- Statistics explicitly identify Source level versus Transformed values.
-- Underlying data remains collapsed by default.
+Unqueried coverage is labelled **Not yet queried** rather than inferred or hard-coded.
 
-## Scope deliberately unchanged
+## Provider-specific detail
 
-No new provider or instrument catalogue was added. This patch retains the next release’s:
+- World Bank is described as cross-country development/macro WDI data. All 13 curated indicators are listed individually; retrieved country/date coverage is used when available.
+- IMF DataMapper lists all 7 implemented annual headline series with semantic units and dynamic dates.
+- IMF SDMX explains its broader multidimensional universe while listing only the one tested monthly all-items CPI route.
+- FRED lists all 19 curated series. Observation dates/metadata appear after retrieval or FRED search metadata; otherwise fields show Not yet queried. Additional search remains described separately.
+- Yahoo instruments are grouped through asset-class categories and include the public-feed methodology caveat.
+- Gembridge Excel lists workbook-discovered series only when configured. The empty state documents the accepted schema and frequencies and creates no fake series.
 
-- curated World Bank WDI provider;
-- curated Yahoo market provider;
-- Gembridge Excel long/wide provider;
-- market and workbook catalogues.
+## Dynamic status and coverage
 
-## Protected areas
+- Status continues to use actual configuration and latest source-test information.
+- Current target states remain honest for World Bank, Yahoo, IMF DataMapper, IMF SDMX, FRED and Excel.
+- Observation coverage is internally aggregated by provider/series to enrich catalogue rows only.
+- The UI is not a cache inventory and does not enumerate files or imply any relationship to `emdash.sqlite`.
+
+## Preserved behavior
 
 Unchanged:
 
+- Indicator Analysis UI and calculations
+- provider retrieval logic, except Excel catalogue start/end metadata and FRED search last-updated metadata now being retained for this view
+- current state migration/default workspace
+- World Bank/Yahoo functionality
+- IMF/FRED diagnostics
+- Gembridge Excel ingestion
 - Event Study
 - MRC
 - News Feed
-- `event_study.py`
-- `mrc.py`
-- `news_ingest.py`
 - `core.py`
 - `emdash.sqlite`
-- Data Coverage backend logic
-
-`database_tab.py` retains only the approved user-facing label change to **Data Coverage & Updates**.
+- existing Data Coverage pull panels, matrices, controls and backend computations

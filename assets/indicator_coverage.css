@@ -1,0 +1,36 @@
+/* Data Coverage & Updates — Indicator Analysis provider catalogue */
+.ia-cov-root { width:100%; }
+.ia-cov-toolbar { display:flex; align-items:center; justify-content:space-between;
+  gap:12px; margin-bottom:8px; }
+.ia-cov-title { color:var(--navy2); font-size:11px; font-weight:700;
+  letter-spacing:.3px; }
+.ia-cov-actions { display:flex; align-items:center; gap:6px; }
+.ia-cov-btn { padding:5px 10px; font-size:10.5px; box-shadow:none; }
+.ia-cov-detail { margin:5px 0; border:1px solid var(--border); border-radius:7px;
+  background:var(--card); overflow:hidden; }
+.ia-cov-detail > summary { list-style:none; cursor:pointer; }
+.ia-cov-detail > summary::-webkit-details-marker { display:none; }
+.ia-cov-summary { display:grid; grid-template-columns:18px minmax(260px,1fr) auto auto;
+  align-items:center; gap:10px; min-height:48px; padding:7px 11px; }
+.ia-cov-summary:hover { background:#F4F6FA; }
+.ia-cov-chevron { color:var(--navy2); font-size:14px; transition:transform .12s ease; }
+.ia-cov-detail[open] .ia-cov-chevron { transform:rotate(90deg); }
+.ia-cov-summary-main { min-width:0; }
+.ia-cov-provider { color:var(--navy1); font-size:12px; font-weight:700; }
+.ia-cov-description { margin-top:2px; color:var(--muted); font-size:10.5px;
+  line-height:1.35; }
+.ia-cov-type { color:var(--muted); font-size:10px; font-weight:600; white-space:nowrap; }
+.ia-cov-scope { display:flex; flex-wrap:wrap; gap:6px 22px; padding:8px 13px;
+  color:var(--muted); background:#FAFBFC; border-top:1px solid #EEF0F4;
+  border-bottom:1px solid #EEF0F4; font-size:10.5px; }
+.ia-cov-table-wrap { width:100%; overflow-x:auto; padding:6px 9px 10px; }
+.ia-cov-table { min-width:1180px; width:100%; }
+.ia-cov-table th { white-space:nowrap; }
+.ia-cov-table td { vertical-align:top; font-size:10.5px; line-height:1.35; }
+.ia-cov-empty { padding:12px 14px; color:var(--muted); font-size:11px;
+  line-height:1.5; background:#fff; }
+@media (max-width:900px) {
+  .ia-cov-summary { grid-template-columns:18px minmax(0,1fr); gap:5px 9px; }
+  .ia-cov-type, .ia-cov-summary > span:last-child { grid-column:2; justify-self:start; }
+  .ia-cov-toolbar { align-items:flex-start; flex-direction:column; }
+}

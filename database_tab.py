@@ -1,5 +1,5 @@
 """
-EMDASH :: database_tab.py   (v8)  -- the "SQLite Store" tab
+EMDASH :: database_tab.py   (v9)  -- the "Data Coverage & Updates" tab
 
 Live map of emdash.sqlite: a slim stats strip, two pull panels (News + Data),
 the news-source coverage table, and macro/market/gauge coverage matrices.
@@ -18,10 +18,15 @@ import datetime as dt
 import json
 
 import pandas as pd
-from dash import dcc, html, Input, Output
+from dash import ALL, dcc, html, Input, Output, State, ctx
 
 import config
 import core
+
+try:
+    import indicator_coverage
+except Exception:
+    indicator_coverage = None
 
 try:
     import runner
@@ -64,7 +69,7 @@ _ISLAND_BG = "#F4F6FA"
 _BANNER_BG = "#EAEFF7"
 
 _CACHE = {"cov": None, "counts": None, "log": None, "news": None,
-          "rendered": None, "clicks": 0}
+          "rendered": None, "clicks": 0, "indicator_stamp": 0.0}
 
 
 def _lbl(field):
@@ -430,8 +435,22 @@ def _render(cov, counts, log, news):
     data_body = (runner.data_panel(log) if runner is not None
                  else html.Span("runner.py not available"))
 
+    if indicator_coverage is not None:
+        try:
+            indicator_body = indicator_coverage.render(
+                indicator_coverage.coverage_snapshot(state=_load_state()))
+        except Exception as exc:
+            indicator_body = html.Div(
+                f"Indicator Analysis coverage unavailable: {exc}",
+                style={"color": P["bad"], "fontSize": "11px"})
+    else:
+        indicator_body = html.Div("Indicator Analysis coverage module unavailable.",
+                                  style={"color": P["muted"]})
+
     return html.Div([
         _tiles(counts, cov),
+        _section("Indicator Analysis live-source coverage", indicator_body,
+                 subtitle="provider universe · full EMDASH catalogue · dynamic coverage/status"),
         _section("News Pull Panel", news_body,
                  subtitle="fetch headlines into the warehouse"),
         _section("Data Pull Panel", data_body,
@@ -451,7 +470,9 @@ def warm_cache():
     try:
         cov, counts, log, news = _compute()
         _CACHE.update({"cov": cov, "counts": counts, "log": log, "news": news,
-                       "rendered": _render(cov, counts, log, news), "clicks": 0})
+                       "rendered": _render(cov, counts, log, news), "clicks": 0,
+                       "indicator_stamp": (indicator_coverage.status_stamp()
+                                           if indicator_coverage is not None else 0.0)})
     except Exception:
         pass
 
@@ -481,7 +502,10 @@ def register(app):
         if tab_value != "database":
             return html.Div()
         clicks = n_clicks or 0
-        if _CACHE["rendered"] is not None and clicks <= _CACHE["clicks"]:
+        current_stamp = (indicator_coverage.status_stamp()
+                         if indicator_coverage is not None else 0.0)
+        if (_CACHE["rendered"] is not None and clicks <= _CACHE["clicks"]
+                and current_stamp == _CACHE.get("indicator_stamp", 0.0)):
             return _CACHE["rendered"]
         try:
             cov, counts, log, news = _compute()
@@ -490,8 +514,19 @@ def register(app):
             return html.Div(f"coverage read failed: {e}",
                             style={"color": P["bad"], "padding": "16px"})
         _CACHE.update({"cov": cov, "counts": counts, "log": log, "news": news,
-                       "rendered": rendered, "clicks": clicks})
+                       "rendered": rendered, "clicks": clicks,
+                       "indicator_stamp": current_stamp})
         return rendered
+
+    @app.callback(
+        Output({"type": "ia-coverage-detail", "provider": ALL}, "open"),
+        Input("ia-cov-expand-all", "n_clicks"),
+        Input("ia-cov-collapse-all", "n_clicks"),
+        State({"type": "ia-coverage-detail", "provider": ALL}, "id"),
+        prevent_initial_call=True)
+    def _toggle_indicator_coverage(expand_clicks, collapse_clicks, ids):
+        triggered = ctx.triggered_id or ""
+        return _indicator_coverage_open_states(triggered, ids)
 
     @app.callback(Output("news-src-body", "children"),
                   Input("news-src-sort", "value"),
@@ -503,3 +538,9 @@ def register(app):
         if not nc or nc.get("total", 0) == 0:
             return html.Div()
         return _news_source_table(nc.get("by_source"), how)
+
+
+def _indicator_coverage_open_states(triggered, ids):
+    if not ids:
+        return []
+    return [triggered == "ia-cov-expand-all"] * len(ids)

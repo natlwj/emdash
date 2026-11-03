@@ -331,3 +331,161 @@ def test_shipped_excel_template_is_valid_long_format():
     assert catalog[0]["series_id"] == "SAMPLE_SERIES_A"
     assert diag.parsed_row_count == 3
     assert "not real data" in diag.response_preview
+
+
+def datamapper_body(code="NGDP_RPCH"):
+    return {"api": {"version": 1}, "values": {code: {
+        "USA": {"2023": 2.9, "2024": 2.8, "2027": 2.1},
+        "CAN": {"2023": 1.5, "2024": 1.7},
+    }}}
+
+
+def test_imf_datamapper_curated_catalogue_metadata_and_request():
+    required = {"NGDP_RPCH", "PCPIPCH", "BCA", "BCA_NGDPD", "LUR",
+                "GGXCNL_NGDP", "GGXWDG_NGDP"}
+    assert required == set(ip.IMF_DATAMAPPER_INDICATORS)
+    assert ip.IMF_DATAMAPPER_INDICATORS["NGDP_RPCH"].semantic_type == "growth_rate"
+    assert ip.IMF_DATAMAPPER_INDICATORS["BCA_NGDPD"].unit == "% of GDP"
+    session = FakeSession([FakeResponse(body=datamapper_body())])
+    provider = ip.IMFDataMapperProvider(session)
+    result = provider.fetch(
+        ip.SeriesRequest("dm", "imf_datamapper", "USA", "NGDP_RPCH"),
+        ip.HistoryWindow("custom", "2023-01-01", "2027-12-31"),
+    )
+    assert [row["period"] for row in result.records] == ["2023", "2024", "2027"]
+    assert result.records[-1]["is_projection"] is True
+    assert session.calls[0]["url"].endswith("/NGDP_RPCH/USA")
+    assert session.calls[0]["params"]["periods"] == "2023,2024,2025,2026,2027"
+    assert result.diagnostic.available_countries == ["CAN", "USA"]
+    assert result.meta["imf_route"] == "datamapper_json"
+
+
+def test_imf_503_and_429_are_gentle_single_attempt_messages():
+    for status in (503, 429):
+        session = FakeSession([FakeResponse(body={"error": "temporary"}, status=status)])
+        provider = ip.IMFDataMapperProvider(session)
+        with pytest.raises(ip.ProviderError) as captured:
+            provider.fetch(
+                ip.SeriesRequest("dm", "imf_datamapper", "USA", "NGDP_RPCH"),
+                ip.HistoryWindow("5y"),
+            )
+        assert len(session.calls) == 1
+        message = str(captured.value)
+        assert f"HTTP {status}" in message
+        assert "No rapid retries" in message
+        if status == 503:
+            assert "planned maintenance" in message
+            assert "does not by itself invalidate the query" in message
+
+
+def test_imf_datamapper_stale_cache_fallback_on_503(tmp_path):
+    request = ip.SeriesRequest("dm", "imf_datamapper", "USA", "NGDP_RPCH")
+    service = ip.ProviderService(
+        {"imf_datamapper": ip.IMFDataMapperProvider(FakeSession([
+            FakeResponse(body=datamapper_body())
+        ]))}, ip.JsonCache(tmp_path, ttl_hours=12))
+    service.fetch_one(request, ip.HistoryWindow("5y"))
+    service.providers["imf_datamapper"] = ip.IMFDataMapperProvider(FakeSession([
+        FakeResponse(body={"error": "maintenance"}, status=503)
+    ]))
+    stale = service.fetch_one(request, ip.HistoryWindow("5y"), force=True)
+    assert stale["meta"]["cache_status"] == "stale cache"
+    assert "planned maintenance" in stale["meta"]["warning"]
+    assert stale["meta"]["live_error_diagnostic"]["http_status"] == "503"
+
+
+def fred_observations_body():
+    return {"observations": [
+        {"date": "2024-01-01", "value": "4.25"},
+        {"date": "2024-01-02", "value": "."},
+        {"date": "2024-01-03", "value": "4.20"},
+    ]}
+
+
+def fred_search_body():
+    return {"seriess": [{
+        "id": "TESTSERIES", "title": "Test Credit Spread", "frequency": "Daily",
+        "units": "Basis Points", "seasonal_adjustment": "Not Seasonally Adjusted",
+        "notes": "Representative search fixture.", "observation_start": "2000-01-01",
+        "observation_end": "2026-10-01",
+    }]}
+
+
+def test_fred_missing_key_is_clear_and_nonblocking(monkeypatch):
+    monkeypatch.setattr(ip, "FRED_API_KEY", "")
+    provider = ip.FREDProvider(FakeSession([]))
+    diagnostic = provider.test(
+        ip.SeriesRequest("f", "fred", "USA", "DGS10"), ip.HistoryWindow("5y"))
+    assert diagnostic.http_status == "NOT_CONFIGURED"
+    assert "FRED_API_KEY" in diagnostic.message
+    assert diagnostic.final_endpoint.endswith("/series/observations")
+
+
+def test_fred_curated_observations_query_and_key_redaction(monkeypatch):
+    monkeypatch.setattr(ip, "FRED_API_KEY", "a" * 32)
+    session = FakeSession([FakeResponse(body=fred_observations_body())])
+    result = ip.FREDProvider(session).fetch(
+        ip.SeriesRequest("f", "fred", "USA", "DGS10"),
+        ip.HistoryWindow("custom", "2024-01-01", "2024-01-31"),
+    )
+    assert [row["value"] for row in result.records] == pytest.approx([4.25, 4.20])
+    assert session.calls[0]["params"]["api_key"] == "a" * 32
+    diagnostic = result.diagnostic.to_dict()
+    assert "a" * 32 not in diagnostic["final_endpoint"]
+    assert "%5Bredacted%5D" in diagnostic["final_endpoint"]
+    assert result.meta["semantic_type"] == "rate"
+
+
+def test_fred_search_and_searched_series_fetch(monkeypatch):
+    monkeypatch.setattr(ip, "FRED_API_KEY", "b" * 32)
+    session = FakeSession([
+        FakeResponse(body=fred_search_body()),
+        FakeResponse(body=fred_observations_body()),
+    ])
+    provider = ip.FREDProvider(session)
+    results, diagnostic = provider.search("credit spread")
+    assert results[0]["code"] == "TESTSERIES"
+    assert results[0]["semantic_type"] == "spread"
+    assert diagnostic.available_series == ["TESTSERIES"]
+    request = ip.SeriesRequest("f", "fred", "USA", "TESTSERIES",
+                               {"fred_definition": results[0]})
+    fetched = provider.fetch(request, ip.HistoryWindow("5y"))
+    assert fetched.meta["series_code"] == "TESTSERIES"
+    assert fetched.meta["unit"] == "Basis Points"
+    assert fetched.meta["semantic_type"] == "spread"
+
+
+def test_fred_curated_catalogue_contains_rates_macro_and_conditions():
+    assert {"DFF", "DGS2", "DGS10", "DGS30", "T10Y2Y", "DFII10",
+            "BAMLC0A0CM", "BAMLH0A0HYM2", "VIXCLS", "NFCI", "STLFSI4",
+            "CPIAUCSL", "UNRATE", "PAYEMS", "INDPRO", "GDPC1", "WALCL"} <= set(ip.FRED_INDICATORS)
+
+
+def test_provider_status_registry_updates_from_actual_source_tests(tmp_path, monkeypatch):
+    monkeypatch.setattr(ip, "FRED_API_KEY", "")
+    service = ip.ProviderService({
+        "world_bank": ip.WorldBankProvider(FakeSession([FakeResponse(body=world_bank_body())])),
+        "fred": ip.FREDProvider(FakeSession([])),
+    }, ip.JsonCache(tmp_path))
+    wb = service.test_source(
+        ip.SeriesRequest("test", "world_bank", "USA", "NY.GDP.MKTP.KD.ZG"),
+        ip.HistoryWindow("5y"))
+    fred = service.test_source(
+        ip.SeriesRequest("test", "fred", "USA", "DGS10"),
+        ip.HistoryWindow("5y"))
+    status = service.status.read()
+    assert wb["http_status"] == "200" and status["world_bank"]["availability"] == "available"
+    assert fred["http_status"] == "NOT_CONFIGURED" and status["fred"]["availability"] == "not configured"
+
+
+def test_demo_status_seed_does_not_overwrite_newer_registry(tmp_path):
+    registry = ip.ProviderStatusRegistry(tmp_path / "provider_status.json")
+    registry.write("world_bank", {"tested_at": "2026-10-25T00:00:00Z",
+                                  "http_status": "503", "message": "newer test"},
+                   "temporarily unavailable")
+    registry.seed_missing(ip.demo_status_seed())
+    status = registry.read()
+    assert status["world_bank"]["message"] == "newer test"
+    assert status["yahoo_market"]["availability"] == "available"
+    assert status["imf_datamapper"]["http_status"] == "403"
+    assert status["imf_sdmx"]["http_status"] == "503"

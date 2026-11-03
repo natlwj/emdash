@@ -1,5 +1,5 @@
 """
-EMDASH :: app.py   (v10)
+EMDASH :: app.py   (v11)
 
 THE DASHBOARD. Reads ONLY through core.py; math via signals.py / event_study.py
 / mrc.py; tagging via news_ingest.py. Styling: assets/emdash.css.
@@ -11,7 +11,8 @@ WHAT CHANGED IN v8
 INDICATOR ANALYSIS
   * Add/collapse/duplicate/reorder/delete workflow for up to eight series.
   * Per-series frequency-aware transformations plus global comparison modes.
-  * World Bank, IMF SDMX CPI, Yahoo chart-market and Gembridge Excel providers.
+  * World Bank, layered IMF DataMapper/SDMX, FRED, Yahoo chart-market and
+    Gembridge Excel providers.
   * Copyable source diagnostics and separate Fetch History / Chart Period.
   * The module never reads or writes emdash.sqlite.
 

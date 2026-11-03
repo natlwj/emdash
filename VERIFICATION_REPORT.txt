@@ -1,93 +1,68 @@
-EMDASH INDICATOR ANALYSIS — FOCUSED FINISHING PATCH VERIFICATION
-Generated: 2026-10-23
+EMDASH DATA COVERAGE SOURCE-CATALOGUE PATCH — VERIFICATION REPORT
+Generated: 2026-10-24
 
-1. BUILD AND APPLICATION STRUCTURE
-PASS — all replacement and existing Python modules compiled.
-PASS — complete application layout constructed with 25 callbacks.
-Expected tabs: Data Coverage & Updates, News Feed, Indicator Analysis, Event Study, Regime (MRC).
+1. SCOPE
+This patch changes only the analyst-facing Indicator Analysis source-catalogue section inside Data Coverage & Updates, plus metadata retained by FRED search and Excel catalogue discovery for dynamic coverage display.
 
 2. AUTOMATED TESTS
-34 passed.
+63 tests passed.
 
-IMF regression coverage:
-- Primary CPI request omits dimensionAtObservation.
-- Primary request retains attributes=none and start/end periods.
-- CPI key order verified: COUNTRY.INDEX_TYPE.COICOP_1999.TYPE_OF_TRANSFORMATION.FREQUENCY.
-- Standard dated SDMX-CSV parsing.
-- Regression fixture based on the user’s target-machine diagnostic: HTTP 200, COUNTRY=USA, INDEX_TYPE=CPI, numeric OBS_VALUE, blank TIME_PERIOD, parsed_row_count 0.
-- Blank-period numeric rows trigger an SDMX-JSON request to the same endpoint/key/date range.
-- SDMX-JSON time-index decoding to dated observations.
-- USA and Canada representative country decoding.
-- Per-attempt endpoint/status/content-type/preview/fields/rows/countries/series diagnostics.
-- Explicit successful and failed fallback results.
-- Numeric blank-period values are never reduced to a generic “no observations” error.
+Provider/catalogue tests verify:
+- exactly six provider summaries;
+- catalogue counts: World Bank 13, IMF DataMapper 7, IMF SDMX 1, FRED 19, Yahoo 15;
+- every catalogue row has label, code/ticker/ID, category, unit, frequency, geography/asset, earliest, latest, metadata/retrieval timestamp and note;
+- all 13 World Bank codes and all 7 DataMapper codes;
+- all 19 curated FRED rows;
+- FRED missing-key metadata remains Not yet queried rather than invented;
+- dynamic retrieved dates/geographies for World Bank and Yahoo;
+- persisted searched-FRED observation start/end and last-updated metadata;
+- IMF/World Bank/Yahoo/FRED dynamic source statuses;
+- Excel configured discovery with actual workbook start/end;
+- Excel not-configured schema/frequency empty state;
+- all provider descriptions, provider-universe text and current-EMDASH-scope text;
+- six collapsed provider details by default;
+- Expand All/Collapse All state behavior;
+- responsive CSS, horizontal table handling and open-state chevron styling;
+- no “Already pulled”, cache-browser, or SQLite-linkage language;
+- existing Refresh and Data Coverage controls;
+- existing Data Coverage backend functions remain AST-identical.
 
-Analytical coverage:
-- semantic types: index, price, raw level, growth rate, rate, ratio, spread, stock, flow and event;
-- frequency-plus-semantic transformation menus;
-- double-transformation prevention for already-%-YoY growth/inflation series;
-- sensible defaults for CPI index, growth rates, ratios, prices and spreads;
-- Level, absolute difference, percentage-point difference, period %, MoM, QoQ, YoY, rolling average, rebasing and rolling Z-score;
-- percentage-point unit handling;
-- native frequencies without interpolation or forward fill;
-- Native, Indexed, Change from Chart Start and Standardised global modes;
-- left/right axes and >2-unit blocking;
-- same-unit scale-dominance warning without mode changes;
-- contextual statistics with Previous, Change, Source level/Transformed basis and unit-sensitive formatting.
+The complete provider, Indicator Analysis and source-coverage suite passed, and the full application layout/callback smoke test passed.
 
-Series-state/UI coverage:
-- add/delete/duplicate/reorder/include and eight-series cap;
-- collapse/expand persistence plus Collapse All/Expand All state reducers;
-- next-unused colour assignment and duplicate-colour warning;
-- market Asset class display with no irrelevant Geography input;
-- rolling-window visibility rules;
-- collapsed underlying data;
-- complete layout/callback construction.
+3. DYNAMIC COVERAGE RULES
+- Dates are internally aggregated by provider+series from successfully returned observations.
+- The UI remains a provider catalogue, not a file-cache inventory.
+- Missing coverage is shown as Not yet queried.
+- World Bank country coverage is shown when retrieved observations identify it.
+- FRED searched metadata can supply observation start/end and last-updated values.
+- Excel start/end comes from configured workbook observations.
+- No blanket date range is assigned across a provider.
 
-Provider/cache coverage retained from the next release:
-- World Bank, Yahoo market and Gembridge Excel URL/parsers/cache tests;
-- Excel long/wide formats, Mapping sheet, table selection and shipped template;
-- fresh/stale cache paths and safe diagnostics.
+4. PROTECTED FUNCTIONALITY
+Unchanged:
+- Indicator Analysis UI, calculations, state migration and demo defaults
+- World Bank and Yahoo retrieval
+- IMF/FRED diagnostics and failure behavior
+- Gembridge Excel ingestion logic
+- Event Study
+- MRC
+- News Feed
+- `core.py`
+- `emdash.sqlite`
+- existing Data Coverage computation, pull panels, matrices and controls
 
-3. EXISTING MODULE SELF-TESTS
-PASS — Event Study v3 self-test.
-PASS — MRC v3 self-test.
-PASS — News Feed tagging self-test, 23/23.
+Protected source/database hashes were checked against the inspected baseline. Read-only SQLite verification did not change the database hash. Existing News Feed/Event Study/MRC app functions and existing Data Coverage backend functions were AST-compared.
 
-4. PROTECTED FILES AND BACKEND
-Unchanged from the inspected current next release:
-- event_study.py  6fb485d73f61245d7051f539765c569bfc9b25dd07cb61e22a1a4ebf64ece2d2
-- mrc.py          062151ac5f45bcf04fa1ee6b3ba86cb9ed3e97927e16ed54691c3132a09df0c7
-- news_ingest.py  50d4e7c2648a236237378d9fdb850d19f33e9ddd16da7c87157f3549bdb326d4
-- core.py         bb630bf05eb748adf2071ea7d07498e2beaf67eee2e2839c0c7f28fd42ae93a0
-- emdash.sqlite   3b4de4ee8372b3b4114eefefc3e1dff16503c88466f423821e075080fb62a6
-- database_tab.py 5b786aa4b311a428a69aa767b83d89fa17b9876c3b767684245536c07ef22c14
+5. UI/LAYOUT
+- Provider summaries are closed by default.
+- Summary rows include description, source type and dynamic status.
+- Expanded tables use EMDASH Segoe UI/navy/gold styling.
+- Tables scroll horizontally rather than compressing columns into unreadable widths.
+- The responsive breakpoint stacks summary metadata on narrow screens.
+- Expand/Collapse buttons are compact and use existing EMDASH button styles.
 
-Read-only SQLite calls left its hash unchanged.
-database_tab.py differs from the repository original only by the previously approved label change.
-27 News Feed/Event Study/MRC app functions were AST-compared; none changed.
+6. INSTALLATION
+Requirements are unchanged. Copy the replacement files over the current EMDASH folder and run the existing BAT file. No pip command is required for an already working current release.
 
-5. LIVE IMF EVIDENCE
-Target machine supplied by user:
-- HTTP 200;
-- SDMX-CSV 2.0;
-- valid USA and CPI identifiers;
-- numeric OBS_VALUE values;
-- blank TIME_PERIOD cells with the old AllDimensions parameter;
-- zero dated parsed rows.
-
-This exact condition is now an automated regression fixture and drives the fallback tests.
-
-Build sandbox finishing-patch attempt:
-- endpoint contains attributes=none, startPeriod and endPeriod;
-- dimensionAtObservation is absent;
-- HTTP 403;
-- response: Request blocked by sandbox policy.
-
-Therefore the patched live-dated IMF result could not be directly confirmed in the build sandbox. Final live confirmation remains the target-machine Data Source Test described in README.
-
-6. REAL DASH/BROWSER LIMIT
-A real browser smoke test could not run in the build sandbox because Dash and a browser executable are unavailable there. The complete application was imported through a dependency-light Dash interface stub, its layout was constructed, and all 25 callbacks registered successfully.
-
-7. SCOPE
-No provider or instrument catalogue was added. IMF exposure remains monthly all-items CPI only. Existing World Bank, Yahoo market and Gembridge Excel scope is unchanged.
+7. BUILD-SANDBOX LIMIT
+The build sandbox lacks Dash and a browser executable. The complete layout and callbacks were structurally constructed with the existing dependency-light smoke harness. Visual behavior is also enforced through component-state and CSS regression checks.

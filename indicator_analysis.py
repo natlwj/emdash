@@ -21,7 +21,7 @@ from dash import ALL, Input, Output, State, ctx, dash_table, dcc, html, no_updat
 
 import config
 from indicator_providers import (
-    MAX_SERIES, MARKET_INDICATORS, PROVIDER_LABELS, SERVICE,
+    FRED_INDICATORS, MAX_SERIES, MARKET_INDICATORS, PROVIDER_LABELS, SERVICE,
     GembridgeExcelProvider, HistoryWindow, SeriesRequest, catalogue,
     indicator_options,
 )
@@ -118,7 +118,8 @@ def default_transform(frequency: str, semantic_type: str) -> str:
     return "level"
 
 
-def _definition_meta(item: dict[str, Any], excel_catalog: list[dict[str, Any]]) -> dict[str, str]:
+def _definition_meta(item: dict[str, Any], excel_catalog: list[dict[str, Any]],
+                     fred_catalog: list[dict[str, Any]] | None = None) -> dict[str, str]:
     provider, indicator = item.get("provider"), item.get("indicator")
     if provider == "gembridge_excel":
         entry = next((row for row in (excel_catalog or []) if row.get("series_id") == indicator), {})
@@ -128,10 +129,20 @@ def _definition_meta(item: dict[str, Any], excel_catalog: list[dict[str, Any]]) 
             "geography": entry.get("geography", ""),
             "semantic_type": entry.get("semantic_type", "raw_level"),
         }
+    if provider == "fred" and indicator not in FRED_INDICATORS:
+        entry = item.get("fred_definition") or next(
+            (row for row in (fred_catalog or []) if row.get("code") == indicator), {})
+        if entry:
+            return {"label": entry.get("label", indicator),
+                    "frequency": entry.get("frequency", "Irregular"),
+                    "unit": entry.get("unit", "Unspecified"),
+                    "geography": "United States",
+                    "semantic_type": entry.get("semantic_type", "raw_level")}
     definition = catalogue(provider).get(indicator)
     if definition:
         geography = item.get("geography", "")
         if provider == "yahoo_market": geography = definition.asset or "Market"
+        if provider == "fred": geography = "United States"
         return {"label": definition.label, "frequency": definition.frequency,
                 "unit": definition.unit, "geography": geography,
                 "semantic_type": definition.semantic_type}
@@ -140,10 +151,17 @@ def _definition_meta(item: dict[str, Any], excel_catalog: list[dict[str, Any]]) 
             "semantic_type": "raw_level"}
 
 
-def _provider_indicator_options(provider: str, excel_catalog: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _provider_indicator_options(provider: str, excel_catalog: list[dict[str, Any]],
+                                fred_catalog: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
     if provider == "gembridge_excel":
         return [{"label": f"{row.get('label', row['series_id'])} · {row['series_id']}", "value": row["series_id"]}
                 for row in sorted(excel_catalog or [], key=lambda row: row.get("label", row.get("series_id", "")))]
+    if provider == "fred":
+        options = indicator_options("fred")
+        seen = {item["value"] for item in options}
+        options.extend({"label": f"{row.get('label', row['code'])} · {row['code']}", "value": row["code"]}
+                       for row in (fred_catalog or []) if row.get("code") not in seen)
+        return options
     return indicator_options(provider)
 
 
@@ -151,16 +169,16 @@ def _field(component, label: str, class_name=""):
     return html.Div([html.Span(label, className="emd-ctrl-label"), component], className=f"ia-field {class_name}".strip())
 
 
-def _summary_name(item: dict[str, Any], excel_catalog: list[dict[str, Any]]) -> str:
-    meta = _definition_meta(item, excel_catalog)
+def _summary_name(item: dict[str, Any], excel_catalog: list[dict[str, Any]], fred_catalog=None) -> str:
+    meta = _definition_meta(item, excel_catalog, fred_catalog)
     geo = meta["geography"] or item.get("geography", "") or "Global"
     return f"{geo} — {meta['label']}"
 
 
-def _series_card(item: dict[str, Any], index: int, excel_catalog: list[dict[str, Any]]) -> html.Div:
+def _series_card(item: dict[str, Any], index: int, excel_catalog: list[dict[str, Any]], fred_catalog=None) -> html.Div:
     uid, provider = item["uid"], item.get("provider", "world_bank")
-    meta = _definition_meta(item, excel_catalog)
-    options = _provider_indicator_options(provider, excel_catalog)
+    meta = _definition_meta(item, excel_catalog, fred_catalog)
+    options = _provider_indicator_options(provider, excel_catalog, fred_catalog)
     indicator = item.get("indicator")
     if indicator not in {option["value"] for option in options} and options:
         indicator = options[0]["value"]
@@ -178,7 +196,7 @@ def _series_card(item: dict[str, Any], index: int, excel_catalog: list[dict[str,
         html.Button("▸" if item.get("collapsed") else "▾", id={"type": "ia-action", "uid": uid, "action": "collapse"}, n_clicks=0, className="ia-collapse-btn", title="Expand/collapse"),
         html.Span(style={"backgroundColor": item.get("colour", COLORS[index % len(COLORS)][1])}, className="ia-colour-mark"),
         html.Div([
-            html.Div(_summary_name(item, excel_catalog), className="ia-series-name"),
+            html.Div(_summary_name(item, excel_catalog, fred_catalog), className="ia-series-name"),
             html.Div(f"{PROVIDER_LABELS.get(provider, provider)} · {meta['frequency']} · {TRANSFORM_LABELS.get(transform, transform)}", className="ia-series-meta"),
         ], className="ia-series-summary"),
         dcc.Checklist(id={"type": "ia-field", "uid": uid, "field": "included"}, value=["on"] if item.get("included", True) else [], options=[{"label": "Include", "value": "on"}], className="emd-check ia-include"),
@@ -188,8 +206,8 @@ def _series_card(item: dict[str, Any], index: int, excel_catalog: list[dict[str,
         _field(dcc.Dropdown(id={"type": "ia-field", "uid": uid, "field": "provider"}, value=provider, clearable=False,
                             options=[{"label": label, "value": key} for key, label in PROVIDER_LABELS.items()]), "Source", "ia-provider-field"),
         (_field(dcc.Dropdown(id={"type": "ia-field", "uid": uid, "field": "geography"}, value=item.get("geography", "USA"), clearable=False, searchable=True, options=COUNTRY_OPTIONS), "Geography", "ia-geography-field")
-         if provider in ("world_bank", "imf_sdmx") else
-         _field(html.Div(meta["geography"] or "From source metadata", className="ia-adaptive-value"), "Asset class" if provider == "yahoo_market" else "Geography", "ia-geography-field")),
+         if provider in ("world_bank", "imf_datamapper", "imf_sdmx") else
+         _field(html.Div(meta["geography"] or "From source metadata", className="ia-adaptive-value"), "Asset class" if provider == "yahoo_market" else ("Coverage" if provider == "fred" else "Geography"), "ia-geography-field")),
         _field(dcc.Dropdown(id={"type": "ia-field", "uid": uid, "field": "indicator"}, value=indicator, clearable=False, searchable=True, options=options, placeholder="Load Excel catalogue first" if provider == "gembridge_excel" else "Select series"), "Indicator / series", "ia-indicator-field"),
         _field(dcc.Dropdown(id={"type": "ia-field", "uid": uid, "field": "transform"}, value=transform, clearable=False, options=transform_options(meta["frequency"], meta["semantic_type"])), "Series transformation", "ia-transform-field"),
         (_field(dcc.Input(id={"type": "ia-field", "uid": uid, "field": "window"}, type="number", min=2, max=500, step=1, value=int(item.get("window", 5)), className="emd-input ia-window-input"), "Window (obs.)", "ia-window-field")
@@ -207,6 +225,7 @@ def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
     return dcc.Tab(label="Indicator Analysis", value="country", className="emd-tab", selected_className="emd-tab--selected", children=[
         dcc.Store(id="ia-series-config", data=stored, storage_type="memory"),
         dcc.Store(id="ia-excel-catalog", data=[], storage_type="memory"),
+        dcc.Store(id="ia-fred-catalog", data=[], storage_type="memory"),
         dcc.Store(id="ia-data-store", storage_type="memory"),
         html.Div([
             html.Div([html.Div("Indicator Analysis", className="ia-page-title"), html.Div("Build and compare up to eight live or workbook series.", className="ia-page-subtitle")]),
@@ -231,6 +250,17 @@ def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
                     html.Button("Load Excel Catalogue", id="ia-excel-load", n_clicks=0, className="emd-btn emd-btn--ghost"),
                 ], className="ia-source-controls"),
                 html.Div(id="ia-excel-status", className="ia-source-status"),
+                html.Div("FRED series search", className="ia-subhead ia-test-head"),
+                html.Div([
+                    dcc.Input(id="ia-fred-search-text", type="text", debounce=True,
+                              placeholder="e.g. term premium, Brazil inflation, credit spread",
+                              className="emd-input ia-fred-search-input"),
+                    html.Button("Search FRED", id="ia-fred-search", n_clicks=0,
+                                className="emd-btn emd-btn--ghost"),
+                    html.Span("Requires FRED_API_KEY. Results are added to FRED series dropdowns for this session.",
+                              className="ia-test-help"),
+                ], className="ia-test-controls"),
+                html.Div(id="ia-fred-search-status", className="ia-source-status"),
                 html.Div("Data Source Test", className="ia-subhead ia-test-head"),
                 html.Div([
                     dcc.Dropdown(id="ia-test-provider", value="imf_sdmx", clearable=False, options=[{"label": label, "value": key} for key, label in PROVIDER_LABELS.items()], style={"width": "220px"}),
@@ -268,8 +298,8 @@ def tab(state: dict[str, Any] | None = None) -> dcc.Tab:
     ])
 
 
-def _frequency(item: dict[str, Any], excel_catalog) -> str:
-    return _definition_meta(item, excel_catalog)["frequency"]
+def _frequency(item: dict[str, Any], excel_catalog, fred_catalog=None) -> str:
+    return _definition_meta(item, excel_catalog, fred_catalog)["frequency"]
 
 
 def unused_colour(configs: list[dict[str, Any]]) -> str:
@@ -285,15 +315,20 @@ def duplicate_colour_warning(configs: list[dict[str, Any]]) -> str:
             if duplicates else "")
 
 
-def _normalise_config(configs: list[dict[str, Any]], excel_catalog) -> list[dict[str, Any]]:
+def _normalise_config(configs: list[dict[str, Any]], excel_catalog, fred_catalog=None) -> list[dict[str, Any]]:
+    fred_catalog = list(fred_catalog or [])
+    for existing in configs or []:
+        definition = existing.get("fred_definition")
+        if definition and not any(row.get("code") == definition.get("code") for row in fred_catalog):
+            fred_catalog.append(definition)
     out = []
     for index, item in enumerate((configs or [])[:MAX_SERIES]):
         row = dict(item); row.setdefault("uid", _uid()); row.setdefault("included", True); row.setdefault("collapsed", False)
         row.setdefault("provider", "world_bank"); row.setdefault("geography", "USA"); row.setdefault("window", 5); row.setdefault("colour", COLORS[index % len(COLORS)][1])
-        options = _provider_indicator_options(row["provider"], excel_catalog)
+        options = _provider_indicator_options(row["provider"], excel_catalog, fred_catalog)
         valid = {option["value"] for option in options}
         if row.get("indicator") not in valid: row["indicator"] = options[0]["value"] if options else ""
-        meta = _definition_meta(row, excel_catalog)
+        meta = _definition_meta(row, excel_catalog, fred_catalog)
         if row.get("transform") not in valid_transforms(meta["frequency"], meta["semantic_type"]):
             row["transform"] = default_transform(meta["frequency"], meta["semantic_type"])
         out.append(row)
@@ -302,9 +337,9 @@ def _normalise_config(configs: list[dict[str, Any]], excel_catalog) -> list[dict
 
 def mutate_series_config(configs: list[dict[str, Any]], operation: str,
                          uid: str | None = None, field: str | None = None,
-                         value: Any = None, excel_catalog=None) -> list[dict[str, Any]]:
+                         value: Any = None, excel_catalog=None, fred_catalog=None) -> list[dict[str, Any]]:
     """Pure series-state reducer used by the Dash callback and automated tests."""
-    rows = _normalise_config(copy.deepcopy(configs or []), excel_catalog or [])
+    rows = _normalise_config(copy.deepcopy(configs or []), excel_catalog or [], fred_catalog or [])
     if operation in ("collapse_all", "expand_all"):
         collapsed = operation == "collapse_all"
         return [dict(row, collapsed=collapsed) for row in rows]
@@ -330,15 +365,19 @@ def mutate_series_config(configs: list[dict[str, Any]], operation: str,
     elif operation == "set" and field:
         rows[pos][field] = value
         if field == "provider":
-            options = _provider_indicator_options(str(value), excel_catalog or [])
+            options = _provider_indicator_options(str(value), excel_catalog or [], fred_catalog or [])
             rows[pos]["indicator"] = options[0]["value"] if options else ""
-            meta = _definition_meta(rows[pos], excel_catalog or [])
+            meta = _definition_meta(rows[pos], excel_catalog or [], fred_catalog or [])
             rows[pos]["transform"] = default_transform(meta["frequency"], meta["semantic_type"])
-            rows[pos]["geography"] = "USA" if value in ("world_bank", "imf_sdmx") else ""
+            rows[pos]["geography"] = "USA" if value in ("world_bank", "imf_datamapper", "imf_sdmx") else ""
         elif field == "indicator":
-            meta = _definition_meta(rows[pos], excel_catalog or [])
+            if rows[pos].get("provider") == "fred" and value not in FRED_INDICATORS:
+                rows[pos]["fred_definition"] = next(
+                    (dict(entry) for entry in (fred_catalog or []) if entry.get("code") == value),
+                    rows[pos].get("fred_definition", {}))
+            meta = _definition_meta(rows[pos], excel_catalog or [], fred_catalog or [])
             rows[pos]["transform"] = default_transform(meta["frequency"], meta["semantic_type"])
-    return _normalise_config(rows, excel_catalog or [])
+    return _normalise_config(rows, excel_catalog or [], fred_catalog or [])
 
 
 def _excel_options(path, sheet, table, fmt, mapping):
@@ -572,16 +611,16 @@ def _diagnostic_text(payload):
 
 
 def register(app):
-    @app.callback(Output("ia-series-list","children"),Output("ia-series-count","children"),Output("ia-add-series","disabled"),Input("ia-series-config","data"),Input("ia-excel-catalog","data"))
-    def _render_series(configs,excel_catalog):
-        configs=_normalise_config(configs or [],excel_catalog or []); return [_series_card(item,i,excel_catalog or []) for i,item in enumerate(configs)],f"{len(configs)} / {MAX_SERIES} series{duplicate_colour_warning(configs)}",len(configs)>=MAX_SERIES
+    @app.callback(Output("ia-series-list","children"),Output("ia-series-count","children"),Output("ia-add-series","disabled"),Input("ia-series-config","data"),Input("ia-excel-catalog","data"),Input("ia-fred-catalog","data"))
+    def _render_series(configs,excel_catalog,fred_catalog):
+        configs=_normalise_config(configs or [],excel_catalog or [],fred_catalog or []); return [_series_card(item,i,excel_catalog or [],fred_catalog or []) for i,item in enumerate(configs)],f"{len(configs)} / {MAX_SERIES} series{duplicate_colour_warning(configs)}",len(configs)>=MAX_SERIES
 
-    @app.callback(Output("ia-series-config","data"),Input("ia-add-series","n_clicks"),Input("ia-collapse-all","n_clicks"),Input("ia-expand-all","n_clicks"),Input({"type":"ia-action","uid":ALL,"action":ALL},"n_clicks"),Input({"type":"ia-field","uid":ALL,"field":ALL},"value"),State({"type":"ia-action","uid":ALL,"action":ALL},"id"),State({"type":"ia-field","uid":ALL,"field":ALL},"id"),State("ia-series-config","data"),State("ia-excel-catalog","data"),prevent_initial_call=True)
-    def _update_config(_add,_collapse_all,_expand_all,_actions,field_values,action_ids,field_ids,configs,excel_catalog):
-        configs=_normalise_config(configs or [],excel_catalog or []); trig=ctx.triggered_id
+    @app.callback(Output("ia-series-config","data"),Input("ia-add-series","n_clicks"),Input("ia-collapse-all","n_clicks"),Input("ia-expand-all","n_clicks"),Input({"type":"ia-action","uid":ALL,"action":ALL},"n_clicks"),Input({"type":"ia-field","uid":ALL,"field":ALL},"value"),State({"type":"ia-action","uid":ALL,"action":ALL},"id"),State({"type":"ia-field","uid":ALL,"field":ALL},"id"),State("ia-series-config","data"),State("ia-excel-catalog","data"),State("ia-fred-catalog","data"),prevent_initial_call=True)
+    def _update_config(_add,_collapse_all,_expand_all,_actions,field_values,action_ids,field_ids,configs,excel_catalog,fred_catalog):
+        configs=_normalise_config(configs or [],excel_catalog or [],fred_catalog or []); trig=ctx.triggered_id
         if trig=="ia-add-series":
             if not _add:return no_update
-            updated=mutate_series_config(configs,"add",excel_catalog=excel_catalog)
+            updated=mutate_series_config(configs,"add",excel_catalog=excel_catalog,fred_catalog=fred_catalog)
             return updated if len(updated)!=len(configs) else no_update
         if trig in ("ia-collapse-all", "ia-expand-all"):
             collapsed = trig == "ia-collapse-all"
@@ -592,7 +631,7 @@ def register(app):
             if pos is None:return no_update
             clicks_by_id={json.dumps(aid,sort_keys=True):clicks for aid,clicks in zip(action_ids or [],_actions or [])}
             if not clicks_by_id.get(json.dumps(trig,sort_keys=True)):return no_update
-            updated=mutate_series_config(configs,action,uid=uid,excel_catalog=excel_catalog)
+            updated=mutate_series_config(configs,action,uid=uid,excel_catalog=excel_catalog,fred_catalog=fred_catalog)
             return updated if updated!=configs else no_update
         if isinstance(trig,dict) and trig.get("type")=="ia-field":
             uid,field=trig.get("uid"),trig.get("field"); values_by_id={json.dumps(fid,sort_keys=True):value for fid,value in zip(field_ids or [],field_values or [])}; key=json.dumps(trig,sort_keys=True); value=values_by_id.get(key)
@@ -600,7 +639,7 @@ def register(app):
             if row is None:return no_update
             new_value=("on" in (value or [])) if field=="included" else value
             if row.get(field)==new_value:return no_update
-            return mutate_series_config(configs,"set",uid=uid,field=field,value=new_value,excel_catalog=excel_catalog)
+            return mutate_series_config(configs,"set",uid=uid,field=field,value=new_value,excel_catalog=excel_catalog,fred_catalog=fred_catalog)
         return no_update
 
     @app.callback(Output("ia-excel-catalog","data"),Output("ia-excel-status","children"),Input("ia-excel-load","n_clicks"),State("ia-excel-path","value"),State("ia-excel-sheet","value"),State("ia-excel-table","value"),State("ia-excel-format","value"),State("ia-excel-mapping","value"),prevent_initial_call=True)
@@ -609,12 +648,24 @@ def register(app):
             catalog,diag=GembridgeExcelProvider.discover(path,sheet,table,fmt,mapping); return catalog,f"{diag.message} Available series: {', '.join(diag.available_series[:12])}"
         except Exception as exc:return [],f"Excel validation failed: {exc}"
 
-    @app.callback(Output("ia-source-test-output","value"),Input("ia-run-source-test","n_clicks"),State("ia-test-provider","value"),State("ia-series-config","data"),State("ia-fetch-mode","value"),State("ia-fetch-custom","start_date"),State("ia-fetch-custom","end_date"),State("ia-excel-path","value"),State("ia-excel-sheet","value"),State("ia-excel-table","value"),State("ia-excel-format","value"),State("ia-excel-mapping","value"),prevent_initial_call=True)
-    def _source_test(_clicks,provider,configs,fetch_mode,start,end,path,sheet,table,fmt,mapping):
+    @app.callback(Output("ia-fred-catalog","data"),Output("ia-fred-search-status","children"),Input("ia-fred-search","n_clicks"),State("ia-fred-search-text","value"),prevent_initial_call=True)
+    def _search_fred(_clicks,search_text):
+        if not str(search_text or "").strip():
+            return [], "Enter FRED search text."
+        try:
+            results, diagnostic = SERVICE.search_fred(str(search_text).strip(), 20)
+            return results, f"{diagnostic.message} Results are now available in FRED series dropdowns."
+        except Exception as exc:
+            return [], f"FRED search unavailable: {exc}"
+
+    @app.callback(Output("ia-source-test-output","value"),Input("ia-run-source-test","n_clicks"),State("ia-test-provider","value"),State("ia-series-config","data"),State("ia-fetch-mode","value"),State("ia-fetch-custom","start_date"),State("ia-fetch-custom","end_date"),State("ia-excel-path","value"),State("ia-excel-sheet","value"),State("ia-excel-table","value"),State("ia-excel-format","value"),State("ia-excel-mapping","value"),State("ia-fred-catalog","data"),prevent_initial_call=True)
+    def _source_test(_clicks,provider,configs,fetch_mode,start,end,path,sheet,table,fmt,mapping,fred_catalog):
         configs=configs or []; row=next((item for item in configs if item.get("provider")==provider),None)
-        defaults={"world_bank":("USA","NY.GDP.MKTP.KD.ZG"),"imf_sdmx":("USA","CPI_ALL_ITEMS_INDEX_M"),"yahoo_market":("Market","BRENT"),"gembridge_excel":("","")}; geography,indicator=defaults.get(provider,("",""))
+        defaults={"world_bank":("USA","NY.GDP.MKTP.KD.ZG"),"imf_datamapper":("USA","NGDP_RPCH"),"imf_sdmx":("USA","CPI_ALL_ITEMS_INDEX_M"),"fred":("USA","DGS10"),"yahoo_market":("Market","BRENT"),"gembridge_excel":("","")}; geography,indicator=defaults.get(provider,("",""))
         if row:geography,indicator=row.get("geography",geography),row.get("indicator",indicator)
         options=_excel_options(path,sheet,table,fmt,mapping) if provider=="gembridge_excel" else {}
+        if provider=="fred" and row and row.get("fred_definition"):
+            options={"fred_definition":row["fred_definition"]}
         diagnostic=SERVICE.test_source(SeriesRequest("test",provider,geography,indicator,options),HistoryWindow(fetch_mode or "5y",start,end))
         return json.dumps(diagnostic,indent=2,ensure_ascii=False)
 
@@ -628,7 +679,11 @@ def register(app):
         excel_options=_excel_options(path,sheet,table,fmt,mapping); requests=[]
         for item in configs or []:
             if item.get("included") and item.get("indicator"):
-                requests.append(SeriesRequest(item["uid"],item.get("provider"),item.get("geography","") or ("Market" if item.get("provider")=="yahoo_market" else ""),item.get("indicator"),excel_options if item.get("provider")=="gembridge_excel" else {}))
+                provider=item.get("provider"); options={}
+                if provider=="gembridge_excel": options=excel_options
+                if provider=="fred" and item.get("fred_definition"): options={"fred_definition":item["fred_definition"]}
+                geography=item.get("geography","") or ("Market" if provider=="yahoo_market" else ("USA" if provider=="fred" else ""))
+                requests.append(SeriesRequest(item["uid"],provider,geography,item.get("indicator"),options))
         try:payload=SERVICE.fetch_many(requests,HistoryWindow(mode or "20y",start,end),force=ctx.triggered_id=="ia-refresh")
         except Exception as exc:payload={"series":[],"errors":[{"request_id":"","message":str(exc)}]}
         successes=len(payload.get("series",[])); errors=payload.get("errors",[]); stale=sum(s.get("meta",{}).get("cache_status")=="stale cache" for s in payload.get("series",[]))
@@ -652,5 +707,5 @@ def register(app):
                 if lo is not None and date<lo:continue
                 if hi is not None and date>hi:continue
                 rows.append({"Series":meta["series_name"],"Date":date.date().isoformat(),"Raw Value":_fmt(value),"Raw Unit":meta.get("unit"),"Series Transform":TRANSFORM_LABELS.get(item["config"].get("transform","level")),"Transformed":_fmt(transformed.get(date,np.nan)),"Chart Value":_fmt(chart.get(date,np.nan)),"Source":meta.get("provider_label"),"Code":meta.get("series_code")})
-        methodology=html.Div([html.P("Fetch History controls provider requests and cache keys. Chart Period filters locally after each per-series transformation."),html.P("Per-series transformations are frequency-aware. Native observations are never interpolated or forward-filled. Rolling windows are measured in observations."),html.P("Native mode supports up to two transformed units using separate axes. Normalised comparison modes are applied after per-series transformations."),html.P("Implemented coverage: curated World Bank WDI; IMF monthly all-items CPI via SDMX 3.0; curated Yahoo chart-market series; Gembridge Excel long/wide format. Coverage is not presented as complete for any provider."),html.P("Series Statistics are deterministic local calculations, not source commentary or AI-generated prose.")])
+        methodology=html.Div([html.P("Fetch History controls provider requests and cache keys. Chart Period filters locally after each per-series transformation."),html.P("Per-series transformations are frequency-aware. Native observations are never interpolated or forward-filled. Rolling windows are measured in observations."),html.P("Native mode supports up to two transformed units using separate axes. Normalised comparison modes are applied after per-series transformations."),html.P("Implemented coverage: curated World Bank WDI; curated annual IMF headline macro series through DataMapper; IMF monthly all-items CPI through SDMX 3.0; curated and searched FRED series when an API key is configured; curated Yahoo chart-market series; Gembridge Excel long/wide format. DataMapper complements rather than replaces SDMX, and coverage is not presented as complete for any provider."),html.P("Series Statistics are deterministic local calculations, not source commentary or AI-generated prose.")])
         return fig,"Series comparison",subtitle,source,_table(_stats(analysis),MAX_SERIES),_table(rows,20),methodology

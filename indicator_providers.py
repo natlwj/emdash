@@ -45,11 +45,13 @@ DEFAULT_CACHE_DIR = Path(os.getenv(
     str(Path(__file__).resolve().parent / ".cache" / "indicator_analysis_v3"),
 ))
 DEFAULT_CACHE_HOURS = float(os.getenv("EMDASH_INDICATOR_CACHE_HOURS", "12"))
+PROVIDER_STATUS_PATH = DEFAULT_CACHE_DIR / "provider_status.json"
 REQUEST_TIMEOUT = (5.0, 30.0)
 MAX_SERIES = 8
 NAME_BY_ISO = {iso: name for iso, name, *_ in config.COUNTRIES}
 IMF_CPI_VERSION = os.getenv("EMDASH_IMF_CPI_VERSION", "5.0.0")
 IMF_API_KEY = os.getenv("EMDASH_IMF_API_KEY", "")
+FRED_API_KEY = os.getenv("FRED_API_KEY", os.getenv("EMDASH_FRED_API_KEY", ""))
 _SECRET_KEYS = {"key", "api_key", "apikey", "token", "access_token", "subscription-key", "ocp-apim-subscription-key"}
 
 
@@ -176,7 +178,9 @@ def _session() -> requests.Session:
     session = requests.Session()
     retry = Retry(
         total=2, connect=2, read=2, status=2, backoff_factor=0.45,
-        status_forcelist=(429, 500, 502, 503, 504),
+        # 429 and 503 are handled explicitly. In particular, do not create a
+        # retry storm during IMF maintenance or provider rate limiting.
+        status_forcelist=(500, 502, 504),
         allowed_methods=frozenset(("GET",)), respect_retry_after_header=True,
     )
     session.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10))
@@ -235,6 +239,44 @@ IMF_INDICATORS = {
     )
 }
 
+# DataMapper is the deliberately simple annual route. It does not replace SDMX;
+# monthly CPI and future richer IMF datasets remain on the SDMX provider.
+IMF_DATAMAPPER_INDICATORS = {
+    item.code: item for item in (
+        IndicatorDefinition("imf_datamapper", "NGDP_RPCH", "Real GDP growth", "Annual", "% YoY", "Real GDP, annual percent change.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/NGDP_RPCH@WEO", semantic_type="growth_rate"),
+        IndicatorDefinition("imf_datamapper", "PCPIPCH", "Consumer price inflation", "Annual", "% YoY", "Average consumer prices, annual percent change.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/PCPIPCH@WEO", semantic_type="growth_rate"),
+        IndicatorDefinition("imf_datamapper", "BCA", "Current account balance", "Annual", "USD billions", "Current-account balance in billions of US dollars.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/BCA@WEO", semantic_type="flow"),
+        IndicatorDefinition("imf_datamapper", "BCA_NGDPD", "Current account balance", "Annual", "% of GDP", "Current-account balance as a share of GDP.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/BCA_NGDPD@WEO", semantic_type="ratio"),
+        IndicatorDefinition("imf_datamapper", "LUR", "Unemployment rate", "Annual", "% of labour force", "Unemployment rate.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/LUR@WEO", semantic_type="rate"),
+        IndicatorDefinition("imf_datamapper", "GGXCNL_NGDP", "General government net lending/borrowing", "Annual", "% of GDP", "General government net lending/borrowing as a share of GDP.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/GGXCNL_NGDP@WEO", semantic_type="ratio"),
+        IndicatorDefinition("imf_datamapper", "GGXWDG_NGDP", "General government gross debt", "Annual", "% of GDP", "General government gross debt as a share of GDP.", "IMF World Economic Outlook (October 2026)", "https://www.imf.org/external/datamapper/GGXWDG_NGDP@WEO", semantic_type="ratio"),
+    )
+}
+
+FRED_INDICATORS = {
+    item.code: item for item in (
+        IndicatorDefinition("fred", "DFF", "Effective Federal Funds Rate", "Daily", "%", "Effective federal funds rate.", "FRED", "https://fred.stlouisfed.org/series/DFF", semantic_type="rate"),
+        IndicatorDefinition("fred", "DGS2", "2-Year Treasury Constant Maturity Rate", "Daily", "%", "US Treasury 2-year constant-maturity rate.", "FRED", "https://fred.stlouisfed.org/series/DGS2", semantic_type="rate"),
+        IndicatorDefinition("fred", "DGS10", "10-Year Treasury Constant Maturity Rate", "Daily", "%", "US Treasury 10-year constant-maturity rate.", "FRED", "https://fred.stlouisfed.org/series/DGS10", semantic_type="rate"),
+        IndicatorDefinition("fred", "DGS30", "30-Year Treasury Constant Maturity Rate", "Daily", "%", "US Treasury 30-year constant-maturity rate.", "FRED", "https://fred.stlouisfed.org/series/DGS30", semantic_type="rate"),
+        IndicatorDefinition("fred", "T10Y2Y", "10-Year minus 2-Year Treasury Spread", "Daily", "percentage points", "10-year less 2-year Treasury constant-maturity spread.", "FRED", "https://fred.stlouisfed.org/series/T10Y2Y", semantic_type="spread"),
+        IndicatorDefinition("fred", "T10Y3M", "10-Year minus 3-Month Treasury Spread", "Daily", "percentage points", "10-year less 3-month Treasury spread.", "FRED", "https://fred.stlouisfed.org/series/T10Y3M", semantic_type="spread"),
+        IndicatorDefinition("fred", "DFII10", "10-Year Treasury Inflation-Indexed Rate", "Daily", "%", "10-year TIPS constant-maturity rate.", "FRED", "https://fred.stlouisfed.org/series/DFII10", semantic_type="rate"),
+        IndicatorDefinition("fred", "BAMLC0A0CM", "ICE BofA US Corporate OAS", "Daily", "percentage points", "US investment-grade corporate option-adjusted spread.", "FRED", "https://fred.stlouisfed.org/series/BAMLC0A0CM", semantic_type="spread"),
+        IndicatorDefinition("fred", "BAMLH0A0HYM2", "ICE BofA US High Yield OAS", "Daily", "percentage points", "US high-yield corporate option-adjusted spread.", "FRED", "https://fred.stlouisfed.org/series/BAMLH0A0HYM2", semantic_type="spread"),
+        IndicatorDefinition("fred", "BAMLEMCBPIOAS", "ICE BofA Emerging Markets Corporate Plus OAS", "Daily", "percentage points", "Emerging-markets corporate option-adjusted spread.", "FRED", "https://fred.stlouisfed.org/series/BAMLEMCBPIOAS", semantic_type="spread"),
+        IndicatorDefinition("fred", "VIXCLS", "CBOE Volatility Index: VIX", "Daily", "Index", "VIX closing level.", "FRED", "https://fred.stlouisfed.org/series/VIXCLS", semantic_type="index"),
+        IndicatorDefinition("fred", "NFCI", "Chicago Fed National Financial Conditions Index", "Weekly", "Index", "National Financial Conditions Index.", "FRED", "https://fred.stlouisfed.org/series/NFCI", semantic_type="index"),
+        IndicatorDefinition("fred", "STLFSI4", "St. Louis Fed Financial Stress Index", "Weekly", "Index", "St. Louis Fed Financial Stress Index.", "FRED", "https://fred.stlouisfed.org/series/STLFSI4", semantic_type="index"),
+        IndicatorDefinition("fred", "CPIAUCSL", "Consumer Price Index for All Urban Consumers", "Monthly", "Index", "US all-items CPI index.", "FRED", "https://fred.stlouisfed.org/series/CPIAUCSL", semantic_type="index"),
+        IndicatorDefinition("fred", "UNRATE", "Unemployment Rate", "Monthly", "%", "US unemployment rate.", "FRED", "https://fred.stlouisfed.org/series/UNRATE", semantic_type="rate"),
+        IndicatorDefinition("fred", "PAYEMS", "All Employees, Total Nonfarm", "Monthly", "Thousands of persons", "US total nonfarm payroll employment.", "FRED", "https://fred.stlouisfed.org/series/PAYEMS", semantic_type="stock"),
+        IndicatorDefinition("fred", "INDPRO", "Industrial Production: Total Index", "Monthly", "Index", "US industrial production index.", "FRED", "https://fred.stlouisfed.org/series/INDPRO", semantic_type="index"),
+        IndicatorDefinition("fred", "GDPC1", "Real Gross Domestic Product", "Quarterly", "Billions of chained 2017 USD", "US real GDP.", "FRED", "https://fred.stlouisfed.org/series/GDPC1", semantic_type="flow"),
+        IndicatorDefinition("fred", "WALCL", "Federal Reserve Total Assets", "Weekly", "Millions USD", "Federal Reserve total assets.", "FRED", "https://fred.stlouisfed.org/series/WALCL", semantic_type="stock"),
+    )
+}
+
 MARKET_INDICATORS = {
     item.code: item for item in (
         IndicatorDefinition("yahoo_market", "BRENT", "Brent crude front-month", "Daily", "USD/bbl", "Front-month Brent crude futures close.", "Yahoo Finance chart data", "https://finance.yahoo.com/quote/BZ=F", key_template="BZ=F", asset="Commodity", semantic_type="price"),
@@ -255,8 +297,8 @@ MARKET_INDICATORS = {
     )
 }
 
-CATALOGUES = {"world_bank": WORLD_BANK_INDICATORS, "imf_sdmx": IMF_INDICATORS, "yahoo_market": MARKET_INDICATORS}
-PROVIDER_LABELS = {"world_bank": "World Bank WDI", "imf_sdmx": "IMF SDMX — CPI", "yahoo_market": "Market Data — Yahoo", "gembridge_excel": "Gembridge Excel"}
+CATALOGUES = {"world_bank": WORLD_BANK_INDICATORS, "imf_datamapper": IMF_DATAMAPPER_INDICATORS, "imf_sdmx": IMF_INDICATORS, "fred": FRED_INDICATORS, "yahoo_market": MARKET_INDICATORS}
+PROVIDER_LABELS = {"world_bank": "World Bank WDI", "imf_datamapper": "IMF DataMapper — Annual", "imf_sdmx": "IMF SDMX — CPI", "fred": "FRED", "yahoo_market": "Market Data — Yahoo", "gembridge_excel": "Gembridge Excel"}
 
 
 def catalogue(provider: str) -> dict[str, IndicatorDefinition]:
@@ -331,6 +373,28 @@ def _planned_diag(provider: str, requested: str, url: str, params=None) -> Reque
     prepared = requests.Request("GET", url, params=params).prepare().url or url
     return RequestDiagnostic(provider=provider, requested_series=requested,
                              final_endpoint=prepared, tested_at=_utc_now())
+
+
+def _imf_http_error(response: requests.Response,
+                    diagnostic: RequestDiagnostic) -> ProviderError | None:
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After", "")
+        extra = f" Retry-After: {retry_after}." if retry_after else ""
+        diagnostic.message = (
+            "IMF is temporarily rate-limiting requests (HTTP 429). "
+            "No rapid retries were attempted; use cached data and retry later." + extra
+        )
+        return ProviderError(diagnostic.message, diagnostic)
+    if response.status_code == 503:
+        diagnostic.message = (
+            "IMF is temporarily unavailable (HTTP 503). IMF announced planned "
+            "maintenance from October 24, 2026 01:00 EST through October 26, "
+            "2026 08:00 EST with intermittent outages. No rapid retries were "
+            "attempted. This status does not by itself invalidate the query; "
+            "cached data will be used when available."
+        )
+        return ProviderError(diagnostic.message, diagnostic)
+    return None
 
 
 def _base_meta(request: SeriesRequest, definition: IndicatorDefinition, request_url: str,
@@ -408,6 +472,72 @@ class WorldBankProvider(SeriesProvider):
         }
 
 
+class IMFDataMapperProvider(SeriesProvider):
+    provider_id = "imf_datamapper"
+    base = "https://www.imf.org/external/datamapper/api/v1"
+
+    def fetch(self, request: SeriesRequest, history: HistoryWindow) -> ProviderResult:
+        definition = self.definition(request.indicator)
+        start, end = history.bounds()
+        params: dict[str, str] = {}
+        if start or end:
+            first = int((start or "1980")[:4])
+            last = int((end or str(TODAY.year + 5))[:4])
+            params["periods"] = ",".join(str(year) for year in range(first, last + 1))
+        url = f"{self.base}/{definition.code}/{request.geography}"
+        planned = _planned_diag(self.provider_id, definition.code, url, params)
+        try:
+            response = self.session.get(url, params=params, headers={"Accept": "application/json"}, timeout=REQUEST_TIMEOUT)
+        except Exception as exc:
+            planned.http_status = "NETWORK_ERROR"; planned.message = safe_error(exc)
+            raise ProviderError(planned.message, planned) from exc
+        diagnostic = _response_diag(self.provider_id, definition.code, response)
+        imf_error = _imf_http_error(response, diagnostic)
+        if imf_error:
+            raise imf_error
+        try:
+            response.raise_for_status()
+            body = response.json()
+            records, parsed = self.parse(body, definition.code, request.geography)
+            diagnostic.detected_columns = parsed["columns"]
+            diagnostic.available_countries = parsed["countries"]
+            diagnostic.available_series = parsed["series"]
+            diagnostic.parsed_row_count = len(records)
+            if not records:
+                diagnostic.message = "IMF DataMapper returned no matching annual observations."
+                raise ProviderError(diagnostic.message, diagnostic)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            diagnostic.message = safe_error(exc)
+            raise ProviderError(diagnostic.message, diagnostic) from exc
+        diagnostic.fallback_result = "DataMapper JSON route succeeded."
+        meta = _base_meta(request, definition, response.url, records)
+        meta["imf_route"] = "datamapper_json"
+        return ProviderResult(records, meta, diagnostic)
+
+    @staticmethod
+    def parse(body: Any, code: str, geography: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        values = (body or {}).get("values", {}) if isinstance(body, dict) else {}
+        indicator_values = values.get(code, {}) if isinstance(values, dict) else {}
+        countries = sorted(str(key) for key in indicator_values.keys()) if isinstance(indicator_values, dict) else []
+        country_values = indicator_values.get(geography, {}) if isinstance(indicator_values, dict) else {}
+        records = []
+        if isinstance(country_values, dict):
+            for year, value in country_values.items():
+                try:
+                    numeric, year_int = float(value), int(year)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(numeric):
+                    records.append({"date": f"{year_int:04d}-12-31", "period": str(year_int),
+                                    "value": numeric, "is_projection": year_int > TODAY.year,
+                                    "observation_status": ""})
+        parsed = {"columns": ["indicator", "country", "year", "value"],
+                  "countries": countries, "series": [code] if code in values else []}
+        return sorted(records, key=lambda item: item["date"]), parsed
+
+
 class IMFSDMXProvider(SeriesProvider):
     provider_id = "imf_sdmx"
     base = "https://api.imf.org/external/sdmx/3.0/data/dataflow"
@@ -428,6 +558,10 @@ class IMFSDMXProvider(SeriesProvider):
         attempts: list[dict[str, Any]] = []
         csv_response = self._request(url, params, self.accept_csv, requested)
         csv_diag = _response_diag(self.provider_id, requested, csv_response)
+        imf_error = _imf_http_error(csv_response, csv_diag)
+        if imf_error:
+            csv_diag.attempts = [csv_diag.to_dict()]
+            raise imf_error
         try:
             csv_response.raise_for_status()
             records, parsed = self.parse(csv_response.text, request.geography)
@@ -460,6 +594,14 @@ class IMFSDMXProvider(SeriesProvider):
         if needs_fallback:
             json_response = self._request(url, params, self.accept_json, requested)
             json_diag = _response_diag(self.provider_id, requested, json_response)
+            imf_error = _imf_http_error(json_response, json_diag)
+            if imf_error:
+                json_diag.message = str(imf_error)
+                attempts.append(json_diag.to_dict())
+                csv_diag.attempts = attempts
+                csv_diag.fallback_result = "SDMX-JSON fallback was temporarily unavailable."
+                csv_diag.message = json_diag.message
+                raise ProviderError(csv_diag.message, csv_diag)
             try:
                 json_response.raise_for_status()
                 json_records, json_parsed = self.parse_json(json_response.json(), request.geography)
@@ -630,6 +772,163 @@ class IMFSDMXProvider(SeriesProvider):
         except (TypeError, ValueError): return None
 
 
+class FREDProvider(SeriesProvider):
+    provider_id = "fred"
+    base = "https://api.stlouisfed.org/fred"
+
+    @staticmethod
+    def _require_key(requested: str, endpoint: str) -> str:
+        if FRED_API_KEY and re.fullmatch(r"[a-z0-9]{32}", FRED_API_KEY):
+            return FRED_API_KEY
+        if FRED_API_KEY:
+            diagnostic = RequestDiagnostic(
+                provider="fred", requested_series=requested,
+                final_endpoint=endpoint, http_status="INVALID_CONFIGURATION",
+                content_type="application/json", tested_at=_utc_now(),
+                message=("FRED_API_KEY is configured but does not match the "
+                         "required 32-character lowercase alphanumeric format."),
+            )
+            raise ProviderError(diagnostic.message, diagnostic)
+        diagnostic = RequestDiagnostic(
+            provider="fred", requested_series=requested,
+            final_endpoint=endpoint, http_status="NOT_CONFIGURED",
+            content_type="application/json", tested_at=_utc_now(),
+            message=("FRED API key is not configured. Set the FRED_API_KEY "
+                     "environment variable, restart EMDASH, then run Source Test."),
+        )
+        raise ProviderError(diagnostic.message, diagnostic)
+
+    def definition_for(self, request: SeriesRequest) -> IndicatorDefinition:
+        if request.indicator in FRED_INDICATORS:
+            return FRED_INDICATORS[request.indicator]
+        supplied = (request.options or {}).get("fred_definition") or {}
+        if supplied and supplied.get("code") == request.indicator:
+            return IndicatorDefinition(
+                "fred", supplied["code"], supplied.get("label") or supplied["code"],
+                supplied.get("frequency") or "Irregular",
+                supplied.get("unit") or "Unspecified",
+                supplied.get("description") or "FRED searched series.", "FRED",
+                supplied.get("source_url") or f"https://fred.stlouisfed.org/series/{supplied['code']}",
+                notes=supplied.get("notes") or "",
+                semantic_type=supplied.get("semantic_type") or infer_semantic_type(
+                    supplied.get("unit", ""), supplied.get("label", "")),
+            )
+        raise ProviderError(
+            "FRED series metadata is unavailable. Search for the series again or choose a curated series."
+        )
+
+    def fetch(self, request: SeriesRequest, history: HistoryWindow) -> ProviderResult:
+        definition = self.definition_for(request)
+        endpoint = f"{self.base}/series/observations"
+        key = self._require_key(definition.code, endpoint)
+        start, end = history.bounds()
+        params = {"series_id": definition.code, "api_key": key,
+                  "file_type": "json", "sort_order": "asc"}
+        if start: params["observation_start"] = start
+        if end: params["observation_end"] = end
+        planned = _planned_diag(self.provider_id, definition.code, endpoint, params)
+        try:
+            response = self.session.get(endpoint, params=params, headers={"Accept": "application/json"}, timeout=REQUEST_TIMEOUT)
+        except Exception as exc:
+            planned.http_status = "NETWORK_ERROR"; planned.message = safe_error(exc)
+            raise ProviderError(planned.message, planned) from exc
+        diagnostic = _response_diag(self.provider_id, definition.code, response)
+        if response.status_code in (429, 503):
+            diagnostic.message = (
+                f"FRED is temporarily {'rate-limiting requests' if response.status_code == 429 else 'unavailable'} "
+                f"(HTTP {response.status_code}). No rapid retries were attempted; cached data will be used when available."
+            )
+            raise ProviderError(diagnostic.message, diagnostic)
+        try:
+            response.raise_for_status()
+            records, parsed = self.parse_observations(response.json())
+            diagnostic.detected_columns = parsed["columns"]
+            diagnostic.available_series = [definition.code]
+            diagnostic.parsed_row_count = len(records)
+            if not records:
+                diagnostic.message = "FRED returned no numeric observations for the selected history."
+                raise ProviderError(diagnostic.message, diagnostic)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            diagnostic.message = safe_error(exc)
+            raise ProviderError(diagnostic.message, diagnostic) from exc
+        fred_request = SeriesRequest(request.request_id, request.provider, "USA", request.indicator, request.options)
+        return ProviderResult(records, _base_meta(fred_request, definition, response.url, records), diagnostic)
+
+    @staticmethod
+    def parse_observations(body: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        observations = (body or {}).get("observations", []) if isinstance(body, dict) else []
+        columns = sorted({key for row in observations for key in row.keys()})
+        records = []
+        for row in observations:
+            if row.get("value") in (None, ".", ""):
+                continue
+            try:
+                value = float(row["value"])
+                date = dt.date.fromisoformat(str(row.get("date", ""))[:10]).isoformat()
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                records.append({"date": date, "period": date, "value": value,
+                                "is_projection": False,
+                                "observation_status": row.get("status", "")})
+        return records, {"columns": columns}
+
+    def search(self, search_text: str, limit: int = 20) -> tuple[list[dict[str, Any]], RequestDiagnostic]:
+        endpoint = f"{self.base}/series/search"
+        key = self._require_key(search_text, endpoint)
+        params = {"search_text": search_text, "api_key": key, "file_type": "json",
+                  "limit": min(max(int(limit), 1), 50), "order_by": "search_rank"}
+        planned = _planned_diag(self.provider_id, search_text, endpoint, params)
+        try:
+            response = self.session.get(endpoint, params=params, headers={"Accept": "application/json"}, timeout=REQUEST_TIMEOUT)
+        except Exception as exc:
+            planned.http_status = "NETWORK_ERROR"; planned.message = safe_error(exc)
+            raise ProviderError(planned.message, planned) from exc
+        diagnostic = _response_diag(self.provider_id, search_text, response)
+        if response.status_code in (429, 503):
+            diagnostic.message = f"FRED search is temporarily unavailable (HTTP {response.status_code})."
+            raise ProviderError(diagnostic.message, diagnostic)
+        try:
+            response.raise_for_status()
+            results = self.parse_search(response.json())
+            diagnostic.detected_columns = sorted({key for row in ((response.json() or {}).get("seriess") or []) for key in row})
+            diagnostic.available_series = [item["code"] for item in results]
+            diagnostic.parsed_row_count = len(results)
+            diagnostic.message = f"Found {len(results)} FRED series."
+            return results, diagnostic
+        except ProviderError:
+            raise
+        except Exception as exc:
+            diagnostic.message = safe_error(exc)
+            raise ProviderError(diagnostic.message, diagnostic) from exc
+
+    @staticmethod
+    def parse_search(body: Any) -> list[dict[str, Any]]:
+        rows = (body or {}).get("seriess", []) if isinstance(body, dict) else []
+        out = []
+        for row in rows:
+            code = str(row.get("id") or "").strip()
+            if not code:
+                continue
+            frequency = str(row.get("frequency") or row.get("frequency_short") or "Irregular")
+            unit = str(row.get("units") or row.get("units_short") or "Unspecified")
+            label = str(row.get("title") or code)
+            out.append({
+                "code": code, "label": label, "frequency": frequency, "unit": unit,
+                "description": str(row.get("notes") or "FRED searched series."),
+                "notes": str(row.get("seasonal_adjustment") or ""),
+                "semantic_type": infer_semantic_type(unit, label),
+                "source_url": f"https://fred.stlouisfed.org/series/{code}",
+                "observation_start": row.get("observation_start", ""),
+                "observation_end": row.get("observation_end", ""),
+                "last_updated": row.get("last_updated", ""),
+                "geography": "United States",
+            })
+        return out
+
+
 class YahooMarketProvider(SeriesProvider):
     provider_id = "yahoo_market"
     base = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -710,7 +1009,14 @@ class GembridgeExcelProvider(SeriesProvider):
     @classmethod
     def discover(cls, path: str, sheet: str = "", table: str = "", fmt: str = "auto", mapping_sheet: str = "Mapping") -> tuple[list[dict[str, Any]], RequestDiagnostic]:
         entries, diagnostic = cls.read_catalogue(path, sheet, table, fmt, mapping_sheet)
-        return [{key: value for key, value in item.items() if key != "records"} for item in entries], diagnostic
+        catalogue = []
+        for item in entries:
+            metadata = {key: value for key, value in item.items() if key != "records"}
+            dates = [row.get("date") for row in item.get("records", []) if row.get("date")]
+            metadata["first"] = min(dates) if dates else ""
+            metadata["last"] = max(dates) if dates else ""
+            catalogue.append(metadata)
+        return catalogue, diagnostic
 
     @classmethod
     def read_catalogue(cls, path: str, sheet: str = "", table: str = "", fmt: str = "auto", mapping_sheet: str = "Mapping") -> tuple[list[dict[str, Any]], RequestDiagnostic]:
@@ -824,11 +1130,78 @@ class JsonCache:
             self.root.mkdir(parents=True, exist_ok=True); path = self._path(key); tmp = path.with_suffix(".tmp")
             body = json.loads(json.dumps(payload)); body["cache_saved_at"] = _utc_now(); tmp.write_text(json.dumps(body, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"); os.replace(tmp, path)
 
+class ProviderStatusRegistry:
+    def __init__(self, path: Path = PROVIDER_STATUS_PATH):
+        self.path = path
+        self._lock = threading.RLock()
+
+    def read(self) -> dict[str, Any]:
+        try:
+            body = json.loads(self.path.read_text(encoding="utf-8"))
+            return body if isinstance(body, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def write(self, provider: str, diagnostic: dict[str, Any],
+              availability: str) -> None:
+        with self._lock:
+            body = self.read()
+            body[provider] = {
+                "availability": availability,
+                "tested_at": diagnostic.get("tested_at") or _utc_now(),
+                "http_status": diagnostic.get("http_status", ""),
+                "message": diagnostic.get("message", ""),
+                "requested_series": diagnostic.get("requested_series", ""),
+            }
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, self.path)
+
+    def seed_missing(self, entries: dict[str, dict[str, Any]]) -> None:
+        """Install target-machine status facts without overwriting newer tests."""
+        with self._lock:
+            body = self.read()
+            changed = False
+            for provider, entry in entries.items():
+                if provider not in body:
+                    body[provider] = dict(entry)
+                    changed = True
+            if changed:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+                os.replace(tmp, self.path)
+
+
+def demo_status_seed() -> dict[str, dict[str, Any]]:
+    tested = "2026-10-24T09:45:00Z"
+    entries = {
+        "world_bank": {"availability": "available", "tested_at": tested,
+                       "http_status": "200", "message": "Target-machine request succeeded.",
+                       "requested_series": "NY.GDP.MKTP.KD.ZG"},
+        "yahoo_market": {"availability": "available", "tested_at": tested,
+                         "http_status": "200", "message": "Target-machine request succeeded.",
+                         "requested_series": "BZ=F"},
+        "imf_datamapper": {"availability": "temporarily unavailable", "tested_at": tested,
+                           "http_status": "403", "message": "Target-machine request blocked by Akamai Access Denied.",
+                           "requested_series": "GGXWDG_NGDP"},
+        "imf_sdmx": {"availability": "temporarily unavailable", "tested_at": tested,
+                     "http_status": "503", "message": "Target-machine IMF SDMX returned no healthy upstream.",
+                     "requested_series": "CPI_ALL_ITEMS_INDEX_M"},
+    }
+    if not FRED_API_KEY:
+        entries["fred"] = {"availability": "not configured", "tested_at": tested,
+                           "http_status": "NOT_CONFIGURED",
+                           "message": "FRED_API_KEY is not configured.",
+                           "requested_series": "DGS10"}
+    return entries
+
 
 class ProviderService:
     def __init__(self, providers=None, cache=None):
-        self.providers = providers or {"world_bank": WorldBankProvider(), "imf_sdmx": IMFSDMXProvider(), "yahoo_market": YahooMarketProvider(), "gembridge_excel": GembridgeExcelProvider()}
-        self.cache = cache or JsonCache(); self._locks = {}; self._guard = threading.Lock()
+        self.providers = providers or {"world_bank": WorldBankProvider(), "imf_datamapper": IMFDataMapperProvider(), "imf_sdmx": IMFSDMXProvider(), "fred": FREDProvider(), "yahoo_market": YahooMarketProvider(), "gembridge_excel": GembridgeExcelProvider()}
+        self.cache = cache or JsonCache(); self.status = ProviderStatusRegistry(self.cache.root / "provider_status.json"); self.status.seed_missing(demo_status_seed()); self._locks = {}; self._guard = threading.Lock()
     @staticmethod
     def cache_key(request, history): return json.dumps({"schema": 4, "request": asdict(request), "history": asdict(history)}, sort_keys=True, separators=(",", ":"))
     def _lock_for(self, key):
@@ -841,8 +1214,16 @@ class ProviderService:
             if cached and fresh and not force:
                 cached = json.loads(json.dumps(cached)); cached["meta"]["cache_status"] = "fresh cache"; return cached
             try:
-                result = self.providers[request.provider].fetch(request, history).to_dict(); result["meta"]["cache_status"] = "live"; self.cache.write(key, result); return result
+                result = self.providers[request.provider].fetch(request, history).to_dict(); result["meta"]["cache_status"] = "live"; self.cache.write(key, result)
+                self.status.write(request.provider, result["meta"].get("diagnostic", {}), "available")
+                return result
             except Exception as exc:
+                diagnostic = error_diagnostic(exc, request.provider) or {}
+                http_status = str(diagnostic.get("http_status", ""))
+                availability = ("not configured" if http_status in ("NOT_CONFIGURED", "INVALID_CONFIGURATION")
+                                else "temporarily unavailable" if http_status in ("429", "503", "NETWORK_ERROR")
+                                else "error")
+                self.status.write(request.provider, diagnostic, availability)
                 if cached:
                     cached = json.loads(json.dumps(cached)); cached["meta"]["cache_status"] = "stale cache"; cached["meta"]["warning"] = f"Live refresh failed; cached observations shown. {safe_error(exc)}"; cached["meta"]["live_error_diagnostic"] = error_diagnostic(exc, request.provider); return cached
                 raise
@@ -860,7 +1241,29 @@ class ProviderService:
     def test_source(self, request, history):
         provider = self.providers.get(request.provider)
         if not provider: return RequestDiagnostic(provider=request.provider, message="Provider is not enabled.", tested_at=_utc_now()).to_dict()
-        return provider.test(request, history).to_dict()
+        diagnostic = provider.test(request, history).to_dict()
+        http_status = str(diagnostic.get("http_status", ""))
+        availability = ("available" if http_status in ("200", "LOCAL_OK") and diagnostic.get("parsed_row_count", 0) > 0
+                        else "not configured" if http_status in ("NOT_CONFIGURED", "INVALID_CONFIGURATION")
+                        else "temporarily unavailable" if http_status in ("429", "503", "NETWORK_ERROR")
+                        else "error")
+        self.status.write(request.provider, diagnostic, availability)
+        return diagnostic
+
+    def search_fred(self, search_text: str, limit: int = 20):
+        provider = self.providers.get("fred")
+        if not isinstance(provider, FREDProvider):
+            raise ProviderError("FRED provider is not enabled.")
+        try:
+            results, diagnostic = provider.search(search_text, limit)
+            self.status.write("fred", diagnostic.to_dict(), "available")
+            return results, diagnostic
+        except Exception as exc:
+            diagnostic = error_diagnostic(exc, "fred") or {}
+            status = str(diagnostic.get("http_status", ""))
+            availability = "not configured" if status in ("NOT_CONFIGURED", "INVALID_CONFIGURATION") else "temporarily unavailable"
+            self.status.write("fred", diagnostic, availability)
+            raise
 
 
 SERVICE = ProviderService()

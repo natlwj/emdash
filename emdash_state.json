@@ -1,5 +1,5 @@
 {
-  "tab": "database",
+  "tab": "country",
   "columns_by": "Desk",
   "f_days": 2,
   "f_desk": [],
@@ -90,7 +90,7 @@
     {
       "uid": "d13926d2d8",
       "included": true,
-      "collapsed": true,
+      "collapsed": false,
       "provider": "imf_sdmx",
       "geography": "USA",
       "indicator": "CPI_ALL_ITEMS_INDEX_M",
@@ -133,20 +133,31 @@
     },
     {
       "uid": "ec0533525c",
-      "included": false,
-      "collapsed": true,
-      "provider": "yahoo_market",
+      "included": true,
+      "collapsed": false,
+      "provider": "fred",
       "geography": "",
-      "indicator": "BTCUSD",
-      "transform": "yoy",
+      "indicator": "T10Y2Y",
+      "transform": "level",
       "window": 5,
       "colour": "#B4453A"
+    },
+    {
+      "uid": "b7b6c59d89",
+      "included": true,
+      "collapsed": false,
+      "provider": "imf_datamapper",
+      "geography": "USA",
+      "indicator": "GGXWDG_NGDP",
+      "transform": "level",
+      "window": 5,
+      "colour": "#6593C4"
     }
   ],
   "ia_fetch_mode": "20y",
   "ia_fetch_start": "2006-01-01",
   "ia_fetch_end": "2026-10-23",
-  "ia_global_mode": "indexed",
+  "ia_global_mode": "standardised",
   "ia_excel_path": "",
   "ia_excel_sheet": "Data_Long",
   "ia_excel_table": "GembridgeSeries",

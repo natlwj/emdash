@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import types
 
@@ -114,11 +115,11 @@ def test_chart_period_custom_and_max():
 
 
 def test_dynamic_series_state_add_collapse_duplicate_reorder_delete_and_limit():
-    rows=ia.default_series(); first=rows[0]["uid"]
-    rows=ia.mutate_series_config(rows,"collapse",uid=first); assert rows[0]["collapsed"] is True
-    rows=ia.mutate_series_config(rows,"duplicate",uid=first); assert len(rows)==3 and rows[1]["uid"]!=first
+    rows=ia.default_series(); first=rows[0]["uid"]; initial=rows[0]["collapsed"]
+    rows=ia.mutate_series_config(rows,"collapse",uid=first); assert rows[0]["collapsed"] is (not initial)
+    before=len(rows); rows=ia.mutate_series_config(rows,"duplicate",uid=first); assert len(rows)==before+1 and rows[1]["uid"]!=first
     duplicate=rows[1]["uid"]; rows=ia.mutate_series_config(rows,"down",uid=duplicate); assert rows[2]["uid"]==duplicate
-    rows=ia.mutate_series_config(rows,"delete",uid=duplicate); assert len(rows)==2
+    rows=ia.mutate_series_config(rows,"delete",uid=duplicate); assert len(rows)==before
     while len(rows)<ia.MAX_SERIES: rows=ia.mutate_series_config(rows,"add")
     capped=ia.mutate_series_config(rows,"add"); assert len(capped)==ia.MAX_SERIES==8
 
@@ -258,3 +259,127 @@ def test_layout_has_collapse_expand_controls_and_underlying_data_remains_closed(
     assert "Collapse All" in joined and "Expand All" in joined
     assert "View underlying data" in joined
     assert any(getattr(detail,"open",None) is False for detail in details)
+
+
+def test_imf_datamapper_semantics_keep_headline_rates_safe():
+    growth = ia._definition_meta(
+        {"provider": "imf_datamapper", "indicator": "NGDP_RPCH", "geography": "USA"}, [])
+    debt = ia._definition_meta(
+        {"provider": "imf_datamapper", "indicator": "GGXWDG_NGDP", "geography": "USA"}, [])
+    assert growth["semantic_type"] == "growth_rate"
+    assert debt["semantic_type"] == "ratio"
+    assert "yoy" not in ia.valid_transforms(growth["frequency"], growth["semantic_type"])
+    assert "pp_diff" in ia.valid_transforms(debt["frequency"], debt["semantic_type"])
+
+
+def test_fred_curated_and_search_results_integrate_in_series_workflow():
+    searched = [{"code": "TESTSERIES", "label": "Test Spread", "frequency": "Daily",
+                 "unit": "Basis Points", "semantic_type": "spread",
+                 "description": "fixture", "source_url": "https://fred.test/TESTSERIES"}]
+    options = ia._provider_indicator_options("fred", [], searched)
+    assert "DGS10" in {item["value"] for item in options}
+    assert "TESTSERIES" in {item["value"] for item in options}
+    rows = ia.default_series(); uid = rows[0]["uid"]
+    rows = ia.mutate_series_config(rows, "set", uid=uid, field="provider",
+                                   value="fred", fred_catalog=searched)
+    rows = ia.mutate_series_config(rows, "set", uid=uid, field="indicator",
+                                   value="TESTSERIES", fred_catalog=searched)
+    assert rows[0]["fred_definition"]["code"] == "TESTSERIES"
+    assert rows[0]["transform"] == "level"
+    meta = ia._definition_meta(rows[0], [], searched)
+    assert meta["semantic_type"] == "spread" and meta["geography"] == "United States"
+
+
+def test_layout_exposes_datamapper_sdmx_and_fred_cleanly():
+    component = ia.tab({}); component_cls = getattr(sys.modules["dash"], "Component", None)
+    labels = []
+    def walk(value):
+        if component_cls and isinstance(value, component_cls):
+            options = value.props.get("options")
+            if isinstance(options, list):
+                labels.extend(str(item.get("label")) for item in options if isinstance(item, dict))
+            walk(value.children); walk(value.props)
+        elif isinstance(value, dict):
+            for item in value.values(): walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value: walk(item)
+    walk(component)
+    joined = " ".join(labels)
+    assert "IMF DataMapper — Annual" in joined
+    assert "IMF SDMX — CPI" in joined
+    assert "FRED" in joined
+
+
+def test_demo_default_contains_only_working_world_bank_and_yahoo_series():
+    rows = ia.default_series()
+    assert [(row["provider"], row["indicator"]) for row in rows] == [
+        ("world_bank", "NY.GDP.MKTP.KD.ZG"),
+        ("world_bank", "GC.DOD.TOTL.GD.ZS"),
+        ("yahoo_market", "BRENT"),
+    ]
+    assert all(row["collapsed"] for row in rows)
+    assert not any(row["provider"].startswith("imf") or row["provider"] == "fred" for row in rows)
+
+
+def test_demo_state_migration_disables_but_preserves_old_imf_and_fred_cards(monkeypatch):
+    monkeypatch.setattr(ia, "FRED_API_KEY", "")
+    state = {"ia_series_config": [
+        {"uid": "wb", "provider": "world_bank", "geography": "USA",
+         "indicator": "NY.GDP.MKTP.KD.ZG", "included": True, "collapsed": False},
+        {"uid": "imf", "provider": "imf_sdmx", "geography": "USA",
+         "indicator": "CPI_ALL_ITEMS_INDEX_M", "included": True, "collapsed": False},
+        {"uid": "fred", "provider": "fred", "geography": "USA",
+         "indicator": "DGS10", "included": True, "collapsed": False},
+    ]}
+    migrated, changed = ia.migrate_demo_state(state)
+    assert changed and migrated[ia.DEMO_MIGRATION_KEY] is True
+    rows = {row["uid"]: row for row in migrated["ia_series_config"]}
+    assert rows["wb"]["included"] is True
+    assert rows["imf"]["included"] is False and rows["imf"]["collapsed"] is True
+    assert rows["fred"]["included"] is False and "API key" in rows["fred"]["demo_disabled_reason"]
+    migrated_again, changed_again = ia.migrate_demo_state(migrated)
+    assert changed_again is False and migrated_again == migrated
+
+
+def test_provider_selector_disables_current_unavailable_sources(monkeypatch):
+    monkeypatch.setattr(ia, "FRED_API_KEY", "")
+    statuses = {
+        "world_bank": {"availability": "available"},
+        "yahoo_market": {"availability": "available"},
+        "imf_datamapper": {"availability": "temporarily unavailable"},
+        "imf_sdmx": {"availability": "temporarily unavailable"},
+        "fred": {"availability": "not configured"},
+    }
+    options = {item["value"]: item for item in ia.provider_select_options(statuses)}
+    assert not options["world_bank"]["disabled"] and not options["yahoo_market"]["disabled"]
+    assert options["imf_datamapper"]["disabled"] and "temporarily unavailable" in options["imf_datamapper"]["label"]
+    assert options["imf_sdmx"]["disabled"]
+    assert options["fred"]["disabled"] and "API key required" in options["fred"]["label"]
+
+
+def test_compact_failure_isolation_avoids_failed_word_and_keeps_successes():
+    payload = {
+        "series": [{"records": [{"date": "2024-01-01", "value": 1}],
+                    "meta": {"cache_status": "live"}}],
+        "errors": [{"request_id": "imf", "message": "temporary unavailable",
+                    "diagnostic": {"http_status": "503"}}],
+    }
+    text, css = ia.compact_retrieval_status(payload)
+    assert text == "1 loaded · 1 live · 0 cached · 1 source unavailable"
+    assert "failed" not in text.lower()
+    assert css.endswith("--warning")
+    frame = ia._frame(payload)
+    assert len(frame) == 1
+
+
+def test_demo_migration_persists_without_clobbering_other_state(tmp_path, monkeypatch):
+    state_path = tmp_path / "emdash_state.json"
+    state_path.write_text(json.dumps({"es_mode": "cross", "news_src_sort": "tier"}))
+    monkeypatch.setattr(ia.config, "ROOT", tmp_path)
+    migrated, changed = ia.migrate_demo_state({"es_mode": "cross"})
+    assert changed
+    ia.persist_demo_migration(migrated)
+    saved = json.loads(state_path.read_text())
+    assert saved["es_mode"] == "cross" and saved["news_src_sort"] == "tier"
+    assert saved[ia.DEMO_MIGRATION_KEY] is True
+    assert not any(row["provider"].startswith("imf") for row in saved["ia_series_config"])
